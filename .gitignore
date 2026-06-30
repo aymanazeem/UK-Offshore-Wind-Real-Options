@@ -1,0 +1,36 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python caches / build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS / editor junk
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets / credentials — never commit
+.env
+.env.*
+*.key
+*.pem
+*.token
+credentials.json
+secrets.json
+
+# Private working notes
+offshore_wind_real_options_plan.md
+
+# Large raw data (the cleaned data/processed/ files ARE committed)
+data/raw/
+
+# Generated outputs — ignore everything except the committed headline chart(s)
+outputs/*
+!outputs/charts/
+outputs/charts/*
+!outputs/charts/*.png

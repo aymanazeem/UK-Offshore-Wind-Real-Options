@@ -1,0 +1,19 @@
+parameter,category,unit,low,central,high,source,notes
+predevelopment,capex,GBP_per_kW,104,216,308,"Arup for DESNZ Offshore Wind LCOE 2024 (2025-07-24) Table 3",2023 real prices
+construction,capex,GBP_per_kW,2415,2823,3101,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",2023 real prices
+infrastructure,capex,GBP_per_kW,802,937,1030,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",excludes OFTO (in TNUoS)
+total_capex,capex,GBP_per_kW,3321,3976,4439,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",2023 real prices
+om,opex,kGBP_per_MW_year,30.5,46.5,64.6,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",operations and maintenance
+insurance,opex,kGBP_per_MW_year,8.0,8.6,9.7,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",
+connection_uos,opex,kGBP_per_MW_year,35.3,83.4,132.9,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",location-specific TNUoS
+total_opex,opex,kGBP_per_MW_year,73.7,138.5,207.2,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",2023 real prices
+net_load_factor,technical,fraction,0.460,0.505,0.561,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",net of losses
+operating_life,technical,years,35,35,35,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",unanimous stakeholder response
+hurdle_rate,financial,fraction,0.062,0.062,0.062,"Arup for DESNZ 2024 (from BloombergNEF H2-2023)",pre-tax real
+predevelopment_period,technical,years,7,7,15,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",
+construction_period,technical,years,4,5,5,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",
+lcoe,output,GBP_per_MWh,55.4,88.5,124.0,"Arup for DESNZ Offshore Wind LCOE 2024 Table 4",2023 real prices low/med/high
+irena_global_tic_2024,crosscheck,USD_per_kW,,2852,,"IRENA Renewable Power Generation Costs in 2024",global weighted avg offshore
+irena_europe_lcoe_2024,crosscheck,USD_per_kWh,,0.080,,"IRENA 2024",Europe new-build offshore
+irena_germany_tic_2024,crosscheck,USD_per_kW,,3000,,"IRENA 2024",Germany offshore
+irena_europe_capacity_factor_2024,crosscheck,fraction,,0.48,,"IRENA 2024",Europe new-build offshore CF

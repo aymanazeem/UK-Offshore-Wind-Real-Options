@@ -1,0 +1,14 @@
+metric,value,unit,period,source,notes
+mean_cf_modern,0.50,fraction,2024+,"DESNZ/Arup 2024; IRENA Europe","central assumption for AR7-era farm"
+mean_cf_potisomporn,0.459,fraction,2000-2017,"Potisomporn & Vogel 2022 Wind Energy","UK aggregate, older fleet"
+interannual_variability,0.04,fraction_of_mean,2000-2017,"Potisomporn & Vogel 2022","approx normally distributed"
+interannual_variability_dnv,0.05,fraction_of_mean,2016,"DNV GL","UK waters range 4-5.5%"
+fleet_mean_lorentzen,0.37,fraction,2006-2021,"Lorentzen 2024 Wind Energy","fleet incl. old/small turbines; SD 14pp"
+record_cf_hywind,0.571,fraction,2019-2020,"Energy Numbers","Hywind Scotland floating, 12mo to Mar 2020"
+desnz_net_lf_low,0.46,fraction,2024,"Arup for DESNZ 2024",low scenario
+desnz_net_lf_central,0.505,fraction,2024,"Arup for DESNZ 2024",central scenario
+desnz_net_lf_high,0.561,fraction,2024,"Arup for DESNZ 2024",high scenario
+irena_europe_cf,0.48,fraction,2024,"IRENA 2024","Europe new-build; Denmark 0.52"
+recommended_beta_mean,0.50,fraction,,"derived","use for Beta distribution fit"
+recommended_beta_sd,0.045,fraction,,"derived (conservative)","~9% of mean; inflated vs measured 4-5.5%"
+degradation,0.005,fraction_per_year,,"industry placeholder","minor lever"
