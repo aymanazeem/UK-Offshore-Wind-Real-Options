@@ -60,6 +60,9 @@ def npv_mean(price, gen, *, cf=P.CF_MEAN, **econ) -> float:
 
 
 def breakeven(price, gen, label, build) -> float | None:
+    """Find the lever value that drives mean NPV to exactly zero, or None if it never crosses the
+    bracket. brentq is a root-finder, it starts from a low and high guess that straddle zero and
+    closes in on the crossing."""
     lo, hi = BREAKEVEN_BRACKET[label]
 
     def f(v):
@@ -67,7 +70,7 @@ def breakeven(price, gen, label, build) -> float | None:
         return npv_mean(price, gen, **kw)
 
     try:
-        if f(lo) * f(hi) > 0:
+        if f(lo) * f(hi) > 0:  # same sign at both ends means no crossing in between
             return None
         return float(brentq(f, lo, hi, xtol=1e-4))
     except ValueError:
@@ -93,7 +96,7 @@ def compute(n_paths: int = P.N_PATHS, seed: int = P.RANDOM_SEED):
             "npv_low": lo, "npv_high": hi, "breakeven": be,
             "swing": abs(hi - lo),
         })
-    rows.sort(key=lambda r: r["swing"])
+    rows.sort(key=lambda r: r["swing"])  # order for the tornado, narrowest swing first
     return base, rows, price, gen
 
 

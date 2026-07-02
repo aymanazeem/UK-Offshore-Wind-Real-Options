@@ -1,4 +1,4 @@
-# Offshore-wind real-options model — common tasks.
+# Offshore-wind real-options model, common tasks.
 # Uses the project venv; create it with `make install` if it does not exist.
 
 PY := ./venv/bin/python

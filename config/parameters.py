@@ -77,6 +77,14 @@ WDA_RATE = 0.18                         # UK main-rate writing-down allowance, r
 # Generation and capacity factor, from capacity_factor_benchmarks.csv
 CF_MEAN = 0.50                      # modern AR7-era farm, DESNZ net LF central 0.505
 CF_SD = 0.045                       # interannual SD, about 9% of mean, conservative vs measured 4-5.5%
+# renewables.ninja upgrade. data/processed/cf_annual.csv holds a 20 year MERRA-2 series for the
+# Dogger Bank cell, pulled with the data package script 02_download_ninja_wind.py. Its interannual
+# SD, 0.0213 or about 3.6% of the mean, is a measured improvement on the conservative CF_SD above
+# and sits inside the literature range, Potisomporn 4%, DNV 4 to 5.5%. Its raw mean, 0.589, is a
+# single-turbine single-cell figure gross of farm wake and availability losses, so it lands above
+# every net benchmark and is NOT used as the farm load factor. Modes, sd_only adopts the ninja SD
+# and keeps the sourced net CF_MEAN, both adopts the ninja mean and SD, off ignores the file.
+CF_NINJA_MODE = "sd_only"          # {"sd_only", "both", "off"}
 CF_RANGE = {"low": 0.46, "central": 0.50, "high": 0.56}   # DESNZ low and high net load factor
 CF_PRICE_CORRELATION = -0.15        # mild negative, cannibalisation. Sensitivity 0 and -0.3
 CF_PRICE_CORRELATION_SENSITIVITY = {"low": -0.30, "central": -0.15, "high": 0.0}
@@ -111,7 +119,7 @@ LSM_STATE_VARS = ("price",)        # primary state variable, price dominates
 # Monte-Carlo simulation settings
 N_PATHS = 50_000                   # base case
 N_PATHS_FINAL = 100_000            # final production run
-ANTITHETIC = True                  # antithetic-variate variance reduction
+ANTITHETIC = True                  # antithetic variates, run mirror-image draws to steady the average
 RANDOM_SEED = 42                   # our choice, fixed for reproducibility, PCG64
 
 # Price process and simulation linkage. See config/price_calibrated.json

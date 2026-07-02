@@ -1,4 +1,5 @@
-"""Static DCF spine, depreciation schedules, the decision-year-0 identity, and the headline NPV."""
+"""Checks on the DCF, that depreciation only shifts timing not the total, decision-year 0 equals
+the static value, and the headline NPV holds."""
 
 from __future__ import annotations
 

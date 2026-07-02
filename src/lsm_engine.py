@@ -82,9 +82,9 @@ def commit_values(price, gen, d_max, *, wacc=P.WACC) -> np.ndarray:
 
 
 def _fit(x: np.ndarray, y: np.ndarray, degree: int) -> np.ndarray:
-    """Conditional expectation E[y | x], fitted by least squares on a monomial basis
-    [1, z, z^2, ...] in the standardised state z. Returns the fitted values."""
-    z = (x - x.mean()) / (x.std() + 1e-12)
+    """Estimate E[y given x], the average of y at each price level x, by least squares on a
+    monomial basis [1, z, z^2, ...] in the standardised state z. Returns the fitted values."""
+    z = (x - x.mean()) / (x.std() + 1e-12)  # standardise so the polynomial stays well conditioned
     basis = np.vstack([z ** k for k in range(degree + 1)]).T
     coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
     return basis @ coef
@@ -106,7 +106,7 @@ def _lsm(ex: np.ndarray, state: np.ndarray, *, allow_walkaway: bool, wacc=P.WACC
     options."""
     n, cols = ex.shape
     d_max = cols - 1
-    disc = 1.0 / (1.0 + wacc)
+    disc = 1.0 / (1.0 + wacc)  # one-year discount factor
 
     # Terminal node. With walk-away, commit only where the expected commit value is positive.
     # Otherwise we must build, so commit regardless. Bank the realised NPV where we commit.
@@ -119,12 +119,12 @@ def _lsm(ex: np.ndarray, state: np.ndarray, *, allow_walkaway: bool, wacc=P.WACC
         commit_year = np.full(n, d_max)
 
     for t in range(d_max - 1, -1, -1):
-        h_hat = _fit(state[:, t], ex[:, t], degree)       # E[commit at t | F_t]
-        c_hat = _fit(state[:, t], v * disc, degree)       # E[continue | F_t]
-        commit = h_hat > c_hat
+        h_hat = _fit(state[:, t], ex[:, t], degree)       # expected value of committing now, given today's price
+        c_hat = _fit(state[:, t], v * disc, degree)       # expected value of waiting, given today's price
+        commit = h_hat > c_hat                            # act only where committing now beats waiting
         if allow_walkaway:
-            commit &= h_hat > 0.0                          # never commit to a negative expectation
-        v = np.where(commit, ex[:, t], v * disc)          # bank the realised outcome
+            commit &= h_hat > 0.0                          # and never commit into an expected loss
+        v = np.where(commit, ex[:, t], v * disc)          # bank the real outcome, others carry their value back one year
         commit_year = np.where(commit, t, commit_year)
 
     return v, commit_year
@@ -325,7 +325,7 @@ def lsm_expand(price, gen2, *, wacc=P.WACC, degree=P.LSM_BASIS_DEGREE,
     d0 = int(decision_years[0])
 
     v, idx = _lsm(ex, state, allow_walkaway=True, wacc=wacc, degree=degree)
-    value0 = v * disc ** d0
+    value0 = v * disc ** d0  # discount from the first window year back to FID
     exercise_year = np.where(idx >= 0, decision_years[np.where(idx >= 0, idx, 0)], -1)
     return ExpandResult(
         option_value=float(value0.mean()),

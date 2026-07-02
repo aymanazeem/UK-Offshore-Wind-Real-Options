@@ -3,9 +3,10 @@ Models annual electricity output, which rises and falls year to year with the wi
 
 Capacity factor is bounded in [0, 1], so we fit a Beta distribution by method of moments to a
 target mean and interannual SD, then draw one CF per year per path. Output applies a small
-linear degradation with age. The CF moments come from a renewables.ninja annual series in
-data/processed/cf_annual.csv if it has been pulled, otherwise from the sourced literature
-moments in config.
+linear degradation with age. The interannual SD comes from a renewables.ninja annual series in
+data/processed/cf_annual.csv when present, while the net mean stays the sourced figure because
+the ninja single-cell mean is gross of farm wake and availability losses. P.CF_NINJA_MODE sets
+this, and with no file present both moments fall back to the sourced literature config.
 
 Draws go through a Gaussian copula, normal to uniform to Beta inverse-CDF, so antithetic
 variates work and the mild negative CF-vs-price correlation can be switched on by tilting the
@@ -37,27 +38,45 @@ CF_ANNUAL_CSV = P.DATA_PROCESSED_DIR / "cf_annual.csv"
 
 
 def fit_beta_moments(mean: float, sd: float) -> tuple[float, float]:
-    """Method-of-moments Beta(alpha, beta) for a target mean and SD."""
+    """Pick the Beta(alpha, beta) whose mean and SD match the targets, by method of moments.
+    A Beta is used because capacity factor is trapped between 0 and 1, and its two shape
+    parameters follow in closed form from the first two moments."""
     var = sd**2
-    m1m = mean * (1.0 - mean)
+    m1m = mean * (1.0 - mean)  # the widest variance any 0-to-1 distribution with this mean allows
     if var >= m1m:
         raise ValueError(f"variance {var:.4g} too large for mean {mean}, need < {m1m:.4g}")
-    k = m1m / var - 1.0
+    k = m1m / var - 1.0  # concentration, larger k gives a tighter Beta
     return mean * k, (1.0 - mean) * k
 
 
-def load_cf_moments(csv_path=CF_ANNUAL_CSV) -> dict:
-    """CF mean and sd for the Beta fit. Uses a renewables.ninja annual series if present, else the
-    sourced config moments. Dropping in cf_annual.csv later upgrades the fit with no code change."""
-    if csv_path.exists():
+def load_cf_moments(csv_path=CF_ANNUAL_CSV, mode: str | None = None) -> dict:
+    """CF mean and sd for the Beta fit.
+
+    With cf_annual.csv present, P.CF_NINJA_MODE decides how much of the ninja series to use.
+      sd_only  keep the sourced net mean CF_MEAN, adopt the ninja interannual SD. Default.
+      both     adopt the ninja mean and SD.
+      off      ignore the file, use the sourced config moments.
+    The ninja raw mean, about 0.589, is a single-cell figure gross of wake and availability
+    losses, so sd_only is the honest upgrade, it takes the measured year to year variability
+    without the gross mean. With no file present both moments fall back to the sourced config."""
+    mode = P.CF_NINJA_MODE if mode is None else mode
+    if mode not in {"sd_only", "both", "off"}:
+        raise ValueError(f"CF_NINJA_MODE must be sd_only, both or off, got {mode!r}")
+    if csv_path.exists() and mode != "off":
         ann = pd.read_csv(csv_path)
         col = "annual_mean_cf" if "annual_mean_cf" in ann.columns else ann.columns[-1]
         cf = ann[col].to_numpy(dtype=float)
+        ninja_mean, ninja_sd, n = float(cf.mean()), float(cf.std(ddof=1)), int(len(cf))
+        if mode == "both":
+            return {
+                "mean": ninja_mean, "sd": ninja_sd, "n_years": n,
+                "source": f"renewables.ninja annual series ({csv_path.name}, {n} yrs), mean and SD",
+            }
         return {
-            "mean": float(cf.mean()),
-            "sd": float(cf.std(ddof=1)),
-            "n_years": int(len(cf)),
-            "source": f"renewables.ninja annual series ({csv_path.name}, {len(cf)} yrs)",
+            "mean": P.CF_MEAN, "sd": ninja_sd, "n_years": n,
+            "source": (f"net mean {P.CF_MEAN:.2f} sourced (DESNZ, Potisomporn, DNV), interannual "
+                       f"SD {ninja_sd:.4f} from renewables.ninja {n} yr. Ninja gross mean "
+                       f"{ninja_mean:.3f} not used, single-cell before wake and availability"),
         }
     return {
         "mean": P.CF_MEAN,
@@ -89,15 +108,16 @@ def price_normal_scores(annual_price: np.ndarray) -> np.ndarray:
     copula."""
     n = annual_price.shape[0]
     ranks0 = np.argsort(np.argsort(annual_price, axis=0), axis=0)  # 0-based rank per column
-    u = (ranks0 + 0.5) / n
-    return stats.norm.ppf(u)
+    u = (ranks0 + 0.5) / n  # ranks to evenly spread uniforms, the +0.5 keeps them off 0 and 1
+    return stats.norm.ppf(u)  # uniforms to standard-normal scores through Phi^-1
 
 
 def simulate_capacity_factors(
     n_paths: int, horizon: int, alpha: float, beta: float, seed: int, antithetic: bool,
     price_normal: np.ndarray | None = None, cf_price_corr: float = 0.0,
 ) -> np.ndarray:
-    """Annual CF draws via a Gaussian copula, N(0,1) -> Phi -> Beta inverse-CDF.
+    """Draw one CF per year per path through a Gaussian copula, a standard-normal draw pushed
+    through Phi to a uniform in (0, 1), then through the Beta inverse-CDF back to a capacity factor.
 
     Antithetic mirroring (z, -z) maps to (u, 1-u), giving paired high and low wind years.
     With price_normal, the per-year normal scores of price, and cf_price_corr=rho, the CF normal
@@ -116,9 +136,10 @@ def simulate_capacity_factors(
         z = rng.standard_normal((n_paths, horizon))
     if price_normal is not None and cf_price_corr:
         w = price_normal[:n_paths]
+        # tilt the CF driver toward price by rho, this stays standard normal so the Beta is unchanged
         z = cf_price_corr * w + np.sqrt(1.0 - cf_price_corr**2) * z
-    u = stats.norm.cdf(z)
-    return stats.beta.ppf(u, alpha, beta)
+    u = stats.norm.cdf(z)  # normal scores to uniforms in (0, 1)
+    return stats.beta.ppf(u, alpha, beta)  # uniforms to capacity factors through the fitted Beta
 
 
 def annual_generation_mwh(

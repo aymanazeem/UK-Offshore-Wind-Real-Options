@@ -1,4 +1,5 @@
-"""Look-ahead-free LSM, the structural identities that pin each option engine to the static spine."""
+"""Structural checks on the LSM. Each ties an option engine back to a known answer, so a failure
+here is a real bug, not sampling noise."""
 
 from __future__ import annotations
 

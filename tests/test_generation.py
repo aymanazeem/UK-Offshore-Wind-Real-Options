@@ -1,5 +1,5 @@
-"""Generation model. The CF-price correlation injects the target dependence without disturbing
-the capacity-factor marginal."""
+"""Checks on the generation model, that switching on the CF-price link hits the target correlation
+without disturbing the capacity-factor marginal."""
 
 from __future__ import annotations
 

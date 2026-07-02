@@ -14,7 +14,7 @@ __pycache__/
 .vscode/
 .idea/
 
-# Secrets / credentials — never commit
+# Secrets / credentials 
 .env
 .env.*
 *.key
@@ -29,7 +29,7 @@ offshore_wind_real_options_plan.md
 # Large raw data (the cleaned data/processed/ files ARE committed)
 data/raw/
 
-# Generated outputs — ignore everything except the committed headline chart(s)
+# Generated outputs
 outputs/*
 !outputs/charts/
 outputs/charts/*

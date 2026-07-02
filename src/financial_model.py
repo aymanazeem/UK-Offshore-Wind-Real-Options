@@ -36,7 +36,7 @@ from src.generation_model import simulate_generation  # noqa: E402
 
 
 def discount_factors(times, wacc: float = P.WACC) -> np.ndarray:
-    """(1+wacc)^-t for an array of times in years."""
+    """Discount factor (1 + wacc)^-t for each time t in years."""
     return (1.0 + wacc) ** (-np.asarray(times, dtype=float))
 
 
@@ -133,12 +133,12 @@ def operating_cashflows(
     offset group profit. Its schedule, straight-line or capital allowances, front-loads but never
     changes the total allowance. Returns (op_cf, cfd_mask)."""
     life = gen.shape[1]
-    cfd_mask = np.arange(life) < cfd_term_years
+    cfd_mask = np.arange(life) < cfd_term_years  # contracted years, then the merchant tail
     revenue = np.where(cfd_mask, cfd_strike * gen, price * gen)
     opex = opex_per_mw_year_k * 1e3 * capacity_mw  # £/yr, constant real
     ebitda = revenue - opex
     dep = depreciation_schedule(total_capex(capacity_mw, capex_per_kw), life, depreciation_method)
-    op_cf = ebitda - P.TAX_RATE * (ebitda - dep)  # dep (life,) broadcasts across paths
+    op_cf = ebitda - P.TAX_RATE * (ebitda - dep)  # tax on EBITDA less depreciation, dep broadcasts over paths
     return op_cf, cfd_mask
 
 
@@ -180,8 +180,8 @@ def value_from_decision_year(
     # mid-year, decom terminal. Everything discounts to the decision date, not to t=0.
     c = P.CONSTRUCTION_PERIOD_YEARS
     capex = total_capex(capacity_mw, capex_per_kw)
-    df_op = discount_factors(c + np.arange(life) + 0.5, wacc)
-    pv_capex = (capex / c) * float(discount_factors(np.arange(c) + 0.5, wacc).sum())
+    df_op = discount_factors(c + np.arange(life) + 0.5, wacc)  # mid-year factor per operating year
+    pv_capex = (capex / c) * float(discount_factors(np.arange(c) + 0.5, wacc).sum())  # CAPEX spread over the build
     pv_decom = float(P.DECOMMISSIONING_PER_MW * capacity_mw * discount_factors(c + life, wacc))
 
     pv_operating = op_cf @ df_op

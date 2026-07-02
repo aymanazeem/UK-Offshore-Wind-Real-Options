@@ -34,13 +34,16 @@ def build_daily_price(raw_path: Path | None = None) -> pd.DataFrame:
     raw_path = _find_raw() if raw_path is None else raw_path
     df = pd.read_csv(raw_path)
 
+    # keep only APX rows with a real trade, drop the dead N2EX feed and any zero-price half-hours
     keep = (df["data_provider"] == "APXMIDP") & (df["price"] > 0) & (df["volume"] > 0)
     sub = df[keep]
     dates = sub["settlement_date"].to_numpy()          # 'YYYY-MM-DD' sorts chronologically
     price = sub["price"].to_numpy(dtype=float)
     vol = sub["volume"].to_numpy(dtype=float)
 
+    # group the half-hours by day, inv maps each row to its day bucket
     days, inv = np.unique(dates, return_inverse=True)
+    # volume-weighted mean per day, sum(price * volume) / sum(volume), so busy half-hours count more
     vw = np.bincount(inv, weights=price * vol) / np.bincount(inv, weights=vol)
     return pd.DataFrame({"date": days, "price_gbp_per_mwh": vw})
 

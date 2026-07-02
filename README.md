@@ -2,7 +2,7 @@
 
 A Monte-Carlo DCF of a 1 GW UK offshore wind farm, extended with a Longstaff-Schwartz
 real-options layer that values the flexibility to defer, expand, or abandon the project as the
-future unfolds. It is a personal learning project. The modelling is deliberately transparent and
+future unfolds. It is a personal learning project. The modelling is transparent and
 every input is sourced, or flagged where it is not.
 
 ## Headline finding
@@ -11,7 +11,7 @@ On central, publicly-sourced assumptions the project is robustly uneconomic, and
 flexibility does not rescue it.
 
 The static NPV is -£1.27bn, and it is negative on 100% of 100,000 simulated price paths. Even the
-best-decile P90 outcome is -£1.20bn.
+best-decile P90 outcome is -£1.23bn.
 
 Deferring the build is worth about £0 of price-timing value. Almost all of the apparent defer
 premium is just the right not to build a value-destroying project, which is worth +£1.27bn, that
@@ -37,7 +37,7 @@ is deterministic. A CfD substitutes for managerial flexibility. See [Caveats](#c
 
 | Quantity | Value | Reading |
 |---|---:|---|
-| Static NPV, commit today | -£1.27bn | P10 -£1.34bn, P50 -£1.27bn, P90 -£1.20bn, P(NPV<0) 100% |
+| Static NPV, commit today | -£1.27bn | P10 -£1.31bn, P50 -£1.27bn, P90 -£1.23bn, P(NPV<0) 100% |
 | Defer option, delay up to 4 yr | +£0.00bn | All premium is the right not to build, price-timing value about £0 |
 | Expand option, +500 MW Phase 2 | +£0.00bn | Deep out-of-the-money, never exercised |
 | Abandon option, mid-life divest | +£0.24bn | Lifts the headline to -£1.03bn, a WACC-gap arbitrage, not flexibility |
@@ -72,6 +72,10 @@ copula that preserves the capacity-factor marginal exactly. The effect on NPV is
 correlation bites only in the heavily-discounted merchant tail, while the CfD years are
 price-independent.
 
+Both run through `financial_model.run()`, `depreciation_method="wda_18"` or `"full_expensing"`
+for the allowances and `cf_price_corr=-0.15` for the correlation. The base case is straight-line
+and independent.
+
 ## How it works
 
 | Step | Method |
@@ -98,7 +102,7 @@ are unsourced placeholders, flagged below and reported only as a sensitivity.
 | OPEX excluding grid | Arup for DESNZ 2024, Table 3 | O&M and insurance | `parameters.py`, `financial_model.py` | central £55.1k/MW/yr, being O&M £46.5k and insurance £8.6k |
 | TNUoS grid charge | Arup for DESNZ 2024, Table 3 | Location-specific transmission charge, part of OPEX | `parameters.py`, `sensitivity.py` | central £83.4k/MW/yr, range £35.3k to £132.9k, the dominant NPV lever |
 | Net load factor | Arup for DESNZ 2024, Table 3 | Capacity-factor scenarios | `generation_model.py` | central 0.505, range 0.46 to 0.561 |
-| Capacity-factor moments | Potisomporn & Vogel 2022, DNV GL, DESNZ, IRENA | Mean and interannual variability for the Beta fit | `generation_model.py` | model uses mean 0.50, SD 0.045, about 9% of the mean, conservative against measured 4 to 5.5% |
+| Capacity-factor moments | Net mean DESNZ and Potisomporn & Vogel 2022. Interannual SD from renewables.ninja MERRA-2 20-yr, DNV cross-check | Mean and interannual variability for the Beta fit | `generation_model.py` | net mean 0.50, interannual SD 0.0213 or about 3.6% of the mean from the ninja series. Ninja gross mean 0.589 not used, single-cell before wake and availability |
 | Operating life | Arup for DESNZ 2024, Table 3 | Asset life | `parameters.py` | 35 years |
 | Hurdle rate, WACC | Arup for DESNZ 2024, from BloombergNEF H2-2023 | Pre-tax real discount rate | `parameters.py`, `financial_model.py` | 6.2%, sensitivity 5.0% to 9.0% |
 | CfD strike and term | DESNZ CfD AR7 Results, Jan 2026 | Fixed-bottom offshore strike and contract length | `parameters.py`, `financial_model.py` | strike £90.91/MWh on a 2024 basis, 20-yr term, admin cap £113/MWh |
@@ -128,8 +132,14 @@ are unsourced placeholders, flagged below and reported only as a sensitivity.
    opt-in and immaterial, under £1m.
 5. Monthly price calibration uses only 29 transitions, a small sample. It is chosen deliberately,
    because daily and weekly fits over-amplify mean reversion and collapse the year-to-year band.
-6. CF moments are sourced literature, DESNZ, DNV and Potisomporn & Vogel, not a raw
-   renewables.ninja series, because the live pull was blocked on the corporate network.
+6. Capacity-factor moments are split by provenance. The net mean stays the sourced figure, 0.50,
+   from DESNZ and Potisomporn & Vogel, because a farm load factor has to be net of wake and
+   availability losses. The interannual SD, 0.0213, now comes from a 20 year renewables.ninja
+   MERRA-2 pull for the Dogger Bank cell. That is 3.6% of the ninja series mean, and about 4.3% of
+   the 0.50 net mean the model applies it to, tighter than the old conservative 0.045 and inside
+   the DNV 4 to 5.5% range. The ninja raw mean, 0.589, is single-cell and gross of those losses, so
+   it is deliberately not used as the load factor. Set CF_NINJA_MODE in config to both to also adopt
+   the ninja mean, or off to revert to the conservative 0.045.
 
 ## Reproduce
 

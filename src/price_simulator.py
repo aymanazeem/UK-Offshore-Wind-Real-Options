@@ -56,7 +56,11 @@ def fractional_year(dates: pd.Series) -> np.ndarray:
 
 
 def seasonal_design(tau: np.ndarray) -> np.ndarray:
-    """Design matrix for the deterministic seasonal component s(tau)."""
+    """The predictor columns for the seasonal fit, evaluated at each date.
+
+    A constant, plus one sine and cosine cycle per year and two cycles per year. Those four waves
+    let the fit bend to the winter peak, the summer dip and a smaller twice-a-year ripple. tau is
+    the position in the calendar year from 0 to 1, so the waves repeat cleanly every year."""
     tau = np.asarray(tau, dtype=float)
     return np.column_stack(
         [
@@ -70,7 +74,10 @@ def seasonal_design(tau: np.ndarray) -> np.ndarray:
 
 
 def fit_seasonal(dates: pd.Series, prices: np.ndarray) -> np.ndarray:
-    """OLS fit of s(tau) to log-price. Returns the 5 seasonal coefficients."""
+    """Fit the seasonal waves to log price by least squares, return the 5 coefficients.
+
+    We fit in log price so the season is a percentage swing rather than a fixed pound amount,
+    which is how power prices move."""
     tau = fractional_year(dates)
     logp = np.log(prices)
     coef, *_ = np.linalg.lstsq(seasonal_design(tau), logp, rcond=None)
@@ -78,7 +85,10 @@ def fit_seasonal(dates: pd.Series, prices: np.ndarray) -> np.ndarray:
 
 
 def deseasonalise(tau: np.ndarray, prices: np.ndarray, seasonal_coef: np.ndarray) -> np.ndarray:
-    """X = ln P - s(tau)."""
+    """Strip the fitted season out of log price, X = ln P - s(tau).
+
+    What is left is the deseasonalised series, the part we treat as random and hand to the OU fit.
+    Removing the season first stops the model mistaking the yearly pattern for randomness."""
     return np.log(prices) - seasonal_design(tau) @ seasonal_coef
 
 
@@ -120,16 +130,22 @@ def aggregate_prices(df: pd.DataFrame, frequency: str) -> tuple[np.ndarray, np.n
 
 # OU calibration by OLS AR(1)
 def fit_ou_ar1(X: np.ndarray, dt: float) -> dict:
-    """Fit the discretised OU, an AR(1), by OLS and back out (kappa, mu, sigma)."""
+    """Fit the deseasonalised series as an AR(1), then convert to the three OU numbers kappa, mu,
+    sigma.
+
+    AR(1) means each step is a straight line on the step before plus noise, x1 = a + b*x0 + e. We
+    fit that line by OLS. For an OU process this OLS fit is the exact maximum likelihood estimate,
+    so it is not an approximation. b is the memory carried from one step to the next. We then back
+    out the OU parameters, kappa the reversion speed, mu the long-run level, sigma the volatility."""
     x0, x1 = X[:-1], X[1:]
     A = np.column_stack([np.ones_like(x0), x0])
     (a, b), *_ = np.linalg.lstsq(A, x1, rcond=None)
     resid = x1 - (a + b * x0)
-    resid_sd = float(resid.std(ddof=2))  # 2 fitted params
+    resid_sd = float(resid.std(ddof=2))  # residual SD, 2 params fitted
 
-    kappa = float(-np.log(b) / dt)
-    mu = float(a / (1.0 - b))
-    sigma = float(resid_sd * np.sqrt(-2.0 * np.log(b) / (dt * (1.0 - b**2))))
+    kappa = float(-np.log(b) / dt)          # reversion speed, b near 1 reverts slowly, near 0 fast
+    mu = float(a / (1.0 - b))               # long-run level the series reverts to
+    sigma = float(resid_sd * np.sqrt(-2.0 * np.log(b) / (dt * (1.0 - b**2))))  # volatility per year
     return {
         "kappa": kappa,
         "mu": mu,
@@ -139,8 +155,8 @@ def fit_ou_ar1(X: np.ndarray, dt: float) -> dict:
         "resid_sd": resid_sd,
         "dt": float(dt),
         "n_obs": int(len(x1)),
-        "half_life_years": float(np.log(2.0) / kappa),
-        "stationary_sd": float(sigma / np.sqrt(2.0 * kappa)),
+        "half_life_years": float(np.log(2.0) / kappa),          # time for a gap from mu to halve
+        "stationary_sd": float(sigma / np.sqrt(2.0 * kappa)),   # long-run (stationary) SD
     }
 
 
@@ -290,8 +306,12 @@ def simulate_price_paths(
     seed: int = P.RANDOM_SEED,
     n_sample_paths: int = 150,
 ) -> PricePaths:
-    """Simulate N annual-average price paths via the exact OU transition, re-seasonalised
-    and exponentiated to £/MWh. Antithetic variates reduce sampling variance."""
+    """Simulate N annual-average price paths and return them in £/MWh.
+
+    Each path steps forward with the exact OU transition, then we add the season back and undo the
+    log to land in pounds. Antithetic variates run every set of random draws alongside its mirror
+    image, so a lucky run in one path is offset by its opposite and the average settles down with
+    fewer paths."""
     cal = load_calibration(window, frequency)
     kappa, mu, sigma = cal["kappa"], cal["mu"], cal["sigma"]
     dt = cal["dt"]
@@ -302,7 +322,9 @@ def simulate_price_paths(
     if antithetic and n_paths % 2:
         n_paths += 1  # need an even count to mirror
 
-    # Exact OU one-step transition coefficients.
+    # Exact one-step OU update. ek is how much of the gap from mu survives one step, sd_step is the
+    # exact noise SD for a step of length dt. Both come straight from the OU solution, so stepping
+    # monthly carries no discretisation error, unlike a naive Euler step.
     ek = np.exp(-kappa * dt)
     sd_step = sigma * np.sqrt((1.0 - np.exp(-2.0 * kappa * dt)) / (2.0 * kappa))
 
@@ -326,13 +348,13 @@ def simulate_price_paths(
         for _ in range(spy):
             if antithetic:
                 z_half = rng.standard_normal(half)
-                z = np.concatenate([z_half, -z_half])
+                z = np.concatenate([z_half, -z_half])  # each draw paired with its negative
             else:
                 z = rng.standard_normal(n_paths)
-            x = mu + (x - mu) * ek + sd_step * z
-            acc += np.exp(s_steps[step] + x)
+            x = mu + (x - mu) * ek + sd_step * z  # one OU step, revert toward mu then add the noise
+            acc += np.exp(s_steps[step] + x)      # add the season back and undo the log, into £/MWh
             step += 1
-        annual[:, yr] = acc / spy
+        annual[:, yr] = acc / spy                 # average the within-year steps into one price
 
     # x = midpoint of each annual-average window, anchored at the true start fraction
     calendar_year = float(start.year) + start_off + 0.5 + np.arange(horizon)
