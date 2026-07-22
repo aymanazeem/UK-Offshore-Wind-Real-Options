@@ -1,153 +1,211 @@
-# Offshore Wind Farm: Real-Options Valuation
+# Offshore Wind Farm, Real Options Valuation
 
-A Monte-Carlo DCF of a 1 GW UK offshore wind farm, with a Longstaff-Schwartz layer that values the
-flexibility to **defer**, **expand**, or **abandon** the project as prices unfold. Every input is
-sourced, or flagged where it is not, and every module is written to be read and explained.
+This project works out what a large offshore wind farm is worth, and what the owner's freedom to change course over time adds to that value. The farm is a 1000 MW (1 GW) project off the UK coast.
 
-## Headline finding
+Two questions drive it. What is the farm worth if the owner commits now. And how much is it worth to be able to wait, expand, or sell later, once electricity prices have moved.
 
-On central, publicly-sourced assumptions the project is **robustly uneconomic, and managerial
-flexibility does not rescue it**.
+I have written this so that someone with no background in finance or energy markets can follow it. I explain each piece of jargon the first time it appears, but keep the detail intact so it still holds up for a specialist. Every input comes from a public source, and where I could not find one, I say so.
 
-- **Static NPV −£1.08bn**, negative on 100% of 50,000 simulated price paths (even the P90 outcome
-  is −£0.90bn). The project's after-tax break-even price is ~£120/MWh, but the CfD strike is
-  £90.91 and simulated wholesale prices average ~£84.
-- **Deferring** the build up to 4 years adds ~£0 of price-timing value. Its whole premium
-  (+£1.08bn) is simply the right *not* to build a value-destroying project — i.e. zero NPV.
-- **Expanding** with a merchant 500 MW Phase 2 is worth ~£0: it is deep out-of-the-money, exercised
-  on only ~2% of paths.
-- **Abandoning** (a mid-life sale to a lower-WACC buyer) adds +£0.19bn, lifting the headline to
-  −£0.89bn. This is a financing arbitrage — a WACC-gap transfer — not price flexibility, and it
-  rests on two unsourced placeholder inputs.
+## What the model finds
 
-The important point: unlike a naive model, the muted timing options here are **not** an artifact of
-the price model. The price fan genuinely widens with the horizon (see below), so decades-out
-uncertainty is real — the options are muted because the economics are simply too far underwater for
-any plausible price to rescue them.
+On central, sourced assumptions the farm loses money, and none of the owner's flexibility rescues it.
 
-## Results
+The headline number is the net present value (NPV). This is every future cash flow the project produces, converted into today's money and summed, minus the build cost. Future money is worth less than money now, so converting it back shrinks it, a step called discounting. A positive NPV creates value, a negative NPV destroys it.
 
-50,000 paths, WACC 6.2%, 35-yr life, CfD £90.91/MWh for 20 yr then merchant. Real 2024 £.
+The farm's NPV is -£1.08bn. It is negative in every one of the 50,000 futures I simulate, and even the best tenth still loses £0.90bn.
 
-| Quantity | Value | Reading |
-|---|---:|---|
-| Static NPV, commit today | −£1.08bn | P10 −£1.24 · P50 −£1.10 · P90 −£0.90 · P(NPV<0) 100% |
-| Defer, delay up to 4 yr | +£0.00bn | All premium is the right not to build; price-timing ≈ £0 |
-| Expand, +500 MW merchant Phase 2 | +£0.00bn | Deep out-of-the-money, exercised on ~2% of paths |
-| Abandon, mid-life divest | +£0.19bn | Lifts headline to −£0.89bn; a WACC-gap arbitrage, not flexibility |
-
-Mean PV bridge behind the static number: CAPEX −£3.43bn, CfD operating PV +£2.14bn, merchant-tail
-PV +£0.23bn, decommissioning −£0.03bn. Why the gap to break-even? `python -m src.lcoe` shows it:
-the model's pre-tax LCOE is £110.7/MWh (+£22 vs the £88.5 Arup benchmark, from the 5-year build lag
-and mid-year discounting), and tax lifts the after-tax break-even to £119.7/MWh — both far above
-the £90.91 CfD.
-
-### Charts
-
-| | |
+| Question | Answer |
 |---|---|
-| ![Price fan](outputs/charts/chart1_price_fan.png) | ![NPV](outputs/charts/chart2_npv.png) |
-| Two-factor price fan (widens with horizon) | NPV distribution and mean PV bridge |
-| ![Sensitivity](outputs/charts/chart3_sensitivity.png) | ![Defer](outputs/charts/chart4_defer.png) |
-| Static-NPV tornado and break-evens | Defer: walk-away vs price-timing |
-| ![Expand](outputs/charts/chart5_expand.png) | ![Abandon](outputs/charts/chart6_abandon.png) |
-| Expand value vs the price Phase 2 achieves | Abandon add-on and its WACC-gap sensitivity |
+| Farm value if built now | -£1.08bn |
+| Value of the right to wait up to 4 years | +£1.08bn, but only as the right not to build |
+| Value of the right to add a 500 MW second phase | ~£0 |
+| Value of the right to sell mid-life | +£0.19bn |
 
-## How it works
+The flexibility is worth little for one reason. The farm is so far from profitable that no realistic price makes building it worthwhile, even though the simulated price range widens sharply over 35 years.
 
-The pipeline is a chain of small, single-purpose modules. Computation is kept separate from
-plotting: every chart lives in `visualisation.py`, so each model module is pure, readable maths.
+## How the model works
 
-| Step | Module | Method |
+### The electricity price
+
+The farm sells at the wholesale price in £/MWh. Nobody knows the future price, so instead of one forecast I simulate 50,000 price paths over the 35 year life and value the farm on each. This is a Monte Carlo simulation, running the model many times with random draws.
+
+I build the price from three layers, all in log terms so each is a percentage move.
+
+- A season, a fixed within-year pattern, higher in winter.
+- A short-term wobble, fast swings that pull back toward normal. This is a mean-reverting (Ornstein-Uhlenbeck) process, fitted to the last 30 months of prices, January 2024 to June 2026. It reverts fast, with a 33 day half-life, so a spike fades halfway back in about a month.
+- A long-term drift, where the normal level itself moves on a slow random walk, with no pull back.
+
+The long-term drift is what matters for the options. It lets the price range keep widening with time, the way real long-dated prices behave. A model with only mean reversion settles into a fixed band within weeks, so its range barely grows over 35 years and every timing option comes out worthless by construction.
+
+I track the spread with P10 and P90, the prices that only 10% of futures fall below and rise above, with P50 the median. The P90 to P10 ratio grows from 1.26 in year 1 to 2.51 in year 35, so a year 1 range of roughly £73 to £93 becomes £51 to £128 by year 35. The median holds near £81, close to the £82 historical average.
+
+I cannot estimate the drift's size from 30 months of data, so I set it from the literature at 6%/yr and treat it as an assumption to test. I start the fit in 2024 on purpose, to exclude the 2021 to 2023 gas crisis, a one-off that would otherwise dominate a 35 year forecast.
+
+![Price fan](outputs/charts/chart1_price_fan.png)
+
+*The shaded band is the P10 to P90 range. It widens with the horizon, driven by the long-term factor. The black line is recent history.*
+
+### How much the farm generates
+
+Output depends on the wind, which varies year to year. The capacity factor is the share of the farm's theoretical maximum output it actually delivers over a year, so 0.50 means half of flat-out running.
+
+I set the average capacity factor to 0.50, the sourced net figure for a modern UK offshore farm. The year to year variation, a standard deviation of 0.0213, comes from a 20 year record of simulated output for the site. A capacity factor is trapped between 0 and 1, so I draw it from a Beta distribution fitted to that average and spread.
+
+Output falls 0.5%/yr as the turbines age, from 4.38 TWh in year 1 to 3.69 TWh by year 35.
+
+![Capacity factor and generation](outputs/charts/chart_generation.png)
+
+*Left, the capacity factor drawn from the fitted Beta distribution. Right, the yearly output band over the life.*
+
+### Turning prices and output into value
+
+Revenue comes in two stages.
+
+For the first 20 years the farm is paid a fixed price through a Contract for Difference (CfD), the main UK subsidy for new renewables. It pays a set price per MWh, the strike price, whatever the market does, which removes price risk for those years. The strike is £90.91/MWh, from the 2026 auction.
+
+After the CfD the farm sells at the market price, called merchant revenue. Wind earns less than the average price here, because every wind farm produces in the same windy hours and that extra supply depresses the price at those times. This is cannibalisation. I apply a capture factor of 0.85, so merchant revenue is 85% of the average price times output.
+
+Against revenue I set four costs.
+
+- The build cost (CAPEX) is £3,976/kW, or £3.98bn, spread over the 5 year build.
+- The operating cost (OPEX) is £138,500/MW/yr, mostly turbine operations and maintenance (O&M) plus the transmission grid charge (TNUoS).
+- Tax is 25% of profit. The build cost earns a deduction, the capital allowance, that lowers early tax bills. I use the UK writing-down allowance, 18% of the remaining balance each year.
+- Decommissioning, taking the farm down at the end, costs £300,000/MW in the final year.
+
+I discount every future year's cash to today at the weighted average cost of capital (WACC), the annual return investors require, here 6.2% in real terms, and sum it to the NPV.
+
+Averaged over 50,000 futures the NPV is -£1.08bn, and it splits like this.
+
+| Piece | Value today |
+|---|---|
+| Build cost | -£3.43bn |
+| CfD-year profit | +£2.14bn |
+| Merchant-year profit | +£0.23bn |
+| Decommissioning | -£0.03bn |
+| NPV | -£1.08bn |
+
+![NPV distribution and bridge](outputs/charts/chart2_npv.png)
+
+*Left, the spread of NPV across the 50,000 futures, all negative. Right, the average build up from cost to NPV.*
+
+### Why the farm loses money
+
+The clearest lens is the levelised cost of energy (LCOE), the single flat price per MWh the farm would need every year to break even. When the LCOE sits above the price the farm earns, it loses money.
+
+Arup, for the UK government, publishes an LCOE of £88.5/MWh from the same cost inputs I use. My model gives more, and src/lcoe.py shows why.
+
+- Pre-tax, my LCOE is £110.7/MWh, £22 above the benchmark because I discount output across the 5 year build delay and value cash flows mid-year, which the headline benchmark does not.
+- After tax, break-even rises to £119.7/MWh. Tax adds the last £9.
+
+The farm earns £90.91 under the CfD and ~£84 on the market, both well below the ~£120 it needs. That gap is the -£1.08bn.
+
+### The three options
+
+A real option is the right, not the duty, to make a decision later once you have seen how things turn out. Waiting, growing, and quitting all carry value, like a financial option. I value three.
+
+I use Longstaff-Schwartz, the standard method for options that can be exercised on many dates. It steps backwards from the final year, and at each year compares acting now against the estimated value of carrying on, keeping the better one. The estimate is the careful part. The payoff from acting depends on prices that have not happened yet, so reading each future's own later prices would be a look-ahead the owner would not really have. Instead the method estimates both values from today's price alone, by fitting a curve across all futures, and decides on that. I checked it against a textbook option with a known answer, and it matches.
+
+Defer, the right to wait up to 4 years, is worth +£1.08bn, all of it the right to walk away. Once the owner can decline, a project that loses money on every path is never started, which turns the -£1.08bn into zero. Timing itself, picking a good build year, adds nothing, because no year is good enough. The owner never builds, on 100% of paths.
+
+![Defer option](outputs/charts/chart4_defer.png)
+
+*The walk-away value is the whole premium over committing now. Pure timing adds nothing.*
+
+Expand, the right to add a 500 MW phase in years 8 to 13 at a 7.5% lower build cost (£3,678/kW) from lessons learned, is worth ~£0. A merchant second phase needs a price it almost never reaches, so it is built on under 2% of paths.
+
+![Expand option](outputs/charts/chart5_expand.png)
+
+*The option stays near zero until the price a second phase would achieve clears break-even, which merchant prices rarely reach.*
+
+Abandon, the right to sell the running farm mid-life to a buyer with a lower cost of capital, 5.0% against my 6.2%, adds +£0.19bn and lifts the value to -£0.89bn. The same cash flows are worth more to a buyer who discounts them less, so this is a financing gain from the discount-rate gap, not price flexibility. It is taken on 100% of paths at the start, and it rests on two numbers I could not source, the buyer's rate and the 2% sale cost, so I treat it as illustrative.
+
+![Abandon option](outputs/charts/chart6_abandon.png)
+
+*The sale add-on grows as the buyer's discount rate falls further below ours, and vanishes when the two match.*
+
+### What moves the answer
+
+I change one input at a time across its sourced range and watch the NPV. Break-even is the value each input would need, on its own, to reach zero.
+
+| Input | NPV, low end | NPV, high end | Break-even |
+|---|---|---|---|
+| CfD strike price | -£1.69bn | -£0.48bn | £131/MWh |
+| Build cost (CAPEX) | -£0.61bn | -£1.42bn | £2,475/kW |
+| Grid charge (TNUoS) | -£0.69bn | -£1.48bn | none in range |
+| Discount rate (WACC) | -£0.78bn | -£1.54bn | 2.9% |
+| Capacity factor | -£1.32bn | -£0.73bn | 0.68 |
+| O&M + insurance | -£0.95bn | -£1.24bn | none in range |
+| Merchant capture | -£1.16bn | -£1.00bn | none in range |
+
+The CfD strike matters most, but would have to reach £131/MWh to break even, above the £113 auction cap. The build cost would have to fall by over a third, the discount rate more than halve, or the capacity factor reach 0.68, well beyond any real farm. No single input reaches zero within its plausible range.
+
+![Sensitivity tornado](outputs/charts/chart3_sensitivity.png)
+
+*Each bar swings one input across its range. The CfD strike and build cost move the NPV most.*
+
+## Data and sources
+
+All money is in real 2024 pounds. Where a source gives a range I use the central figure and test the low and high in the sensitivity.
+
+| Input | Source | Value |
 |---|---|---|
-| Prices | `price_simulator.py` | **Two-factor model** in log space: season + a fast mean-reverting short-term factor (fitted to recent monthly prices) + a slow **random-walk long-term level**. The random walk makes the price fan keep widening with the horizon, so long-dated uncertainty is real. |
-| Generation | `generation_model.py` | Annual capacity factor drawn from a Beta fitted to a sourced net mean and a measured year-to-year spread; compound age de-rating. |
-| Cash flows | `financial_model.py` | Hybrid revenue (20-yr fixed CfD, then merchant price haircut by a **capture factor**), mid-year-discounted DCF, CAPEX over the build, an 18% writing-down capital allowance (the realistic UK tax shield), terminal decommissioning. |
-| LCOE check | `lcoe.py` | Reconciles the model's economics to the published £88.5/MWh LCOE benchmark, so the negative NPV is transparent. |
-| Options | `lsm_engine.py` | Longstaff-Schwartz Monte Carlo. At each yearly node, compare "act now" against the regression-estimated value of waiting. Validated against a binomial-tree American put in the test suite. |
-| Sensitivity | `sensitivity.py` | One-at-a-time tornado on the static NPV, plus each lever's break-even. |
+| Wholesale price history | Elexon | Daily GB price, short-term fit from January 2024 |
+| Build cost (CAPEX) | Arup for the UK government, 2024 | £3,976/kW, over a 5 year build |
+| O&M + insurance | Arup for the UK government, 2024 | £55,100/MW/yr |
+| Grid charge (TNUoS) | Arup for the UK government, 2024 | £83,400/MW/yr |
+| Capacity factor | UK government for the average, renewables.ninja for the spread | 0.50 average, 0.0213 standard deviation |
+| Operating life, discount rate | Arup for the UK government, 2024 | 35 years, 6.2% real |
+| CfD strike and term | UK auction results, January 2026 | £90.91/MWh, 20 years, £113 cap |
+| Decommissioning | DNV, Crown Estate | £300,000/MW, final year |
+| Corporation tax | UK main rate | 25%, with an 18% writing-down allowance |
+| Merchant capture factor | My assumption, for cannibalisation | 0.85 |
+| Long-term price volatility | My assumption, from the literature | 6%/yr |
+| Second phase cost saving | Arup and IRENA learning rates | 7.5% |
+| Buyer discount rate, sale cost | Not sourced, placeholders | 5.0%, 2% |
 
-## Key modelling choices
+## What I could not pin down
 
-- **Two-factor prices.** A one-factor mean-reverting model snaps back to its average within weeks,
-  leaving the 35-year fan almost flat and *forcing* timing options to ~£0. The long-term
-  random-walk factor fixes this: P90/P10 grows from ~1.3 (year 1) to ~2.6 (year 35). Its volatility
-  cannot be estimated from ~2.5 years of data, so it is a forward-looking assumption
-  (`PRICE_LT_VOL`, 6%/yr) reported as a sensitivity.
-- **Merchant capture factor (0.85).** Wind sells below the time-average price because it generates
-  when other wind farms do, depressing the price ("cannibalisation"). Applies to merchant years
-  only; CfD years are unaffected.
-- **Capital allowances.** The base case uses the standard UK 18% writing-down allowance (front-loaded
-  tax shield), not conservative straight-line.
+Four things are weaker than the rest, and I flag them.
 
-## Data and assumptions
+- The long-term price volatility, 6%/yr, is a literature assumption, not something the data can pin down. It drives most of the option value, so I report it as a range.
+- The buyer's discount rate and sale cost in the abandon option, 5.0% and 2%, have no single source.
+- The short-term price fit uses only 30 months. This is deliberate, to exclude the gas crisis, and it only sets the fast wobble. The long-run uncertainty comes from the drift.
+- The grid charge is at the central, location-specific figure. A better sited farm pays far less, so part of the loss is a siting choice.
 
-Money is real 2023/24 GBP; central figures are default, ranges feed the sensitivity. Two abandon
-inputs are unsourced placeholders, reported only as a sensitivity.
-
-| Input | Source | Value / notes |
-|---|---|---|
-| Wholesale price history | Elexon | Daily GB price; short-term factor fitted from 2024-01-01 (post gas-crisis) |
-| CAPEX | Arup for DESNZ LCOE 2024, Table 3 | £3,976/kW central (£3,321–4,439), over a 5-yr build |
-| OPEX: O&M + insurance | Arup for DESNZ 2024 | £55.1k/MW/yr central |
-| OPEX: TNUoS grid charge | Arup for DESNZ 2024 | £83.4k/MW/yr central (£35.3–132.9k); the dominant cost lever |
-| Capacity factor | DESNZ net mean; renewables.ninja for the spread | net mean 0.50, year-to-year SD 0.0213 |
-| Operating life / WACC | Arup for DESNZ 2024 | 35 yr; 6.2% pre-tax real (5.0–9.0%) |
-| CfD strike & term | DESNZ AR7 Results, Jan 2026 | £90.91/MWh, 20 yr, admin cap £113 |
-| Decommissioning | DNV, Crown Estate | £300k/MW in the final year |
-| Corporation tax | UK main rate | 25%, with an 18% writing-down capital allowance |
-| Merchant capture factor | Assumption (cannibalisation) | 0.85 (0.70–1.00) |
-| Long-term price volatility | Assumption (Schwartz-Smith literature) | 6%/yr (4–10%); reported as a sensitivity |
-| Phase-2 cost learning | Arup / IRENA | 7.5% cheaper £/kW |
-| Buyer WACC / transaction cost | **Unsourced placeholders** | 5.0% / 2%; drive the abandon add-on only |
-
-## Caveats
-
-1. **The abandon add-on is a financing arbitrage, not flexibility** — a deterministic WACC-gap
-   transfer, exercised at commissioning on 100% of paths, resting on two unsourced placeholders.
-2. **The long-term price volatility is an assumption, not an estimate** (too little history), so it
-   is always shown as a sensitivity. It is the main driver of any tail option value.
-3. **The short-term factor is fitted to ~30 months of data.** That window is deliberate (it excludes
-   the 2021–23 gas crisis), and it only sets the fast-reverting behaviour; long-horizon uncertainty
-   comes from the long-term factor, not this fit.
-4. **Conservative economics.** TNUoS is at the location-specific central charge (~+£20/MWh on LCOE);
-   a better-sited project would be less negative. No single sourced lever reaches NPV = 0 in range.
-
-## Reproduce
+## Running it
 
 ```bash
-make install      # pinned deps into ./venv
-make test         # deterministic pytest suite (DCF identities, price fan, LSM vs binomial)
-make charts       # regenerate all charts (N=50000; override with N=...)
-make lcoe         # print the LCOE reconciliation
+make install      # install the pinned dependencies into ./venv
+make test         # run the test suite
+make charts       # regenerate every chart at 50,000 paths
+make lcoe         # print the levelised cost reconciliation
 ```
 
-Each module runs on its own too:
+Each part also runs on its own.
 
 ```bash
-./venv/bin/python -m src.price_simulator      # recalibrate + show the fan widening
-./venv/bin/python -m src.financial_model      # static NPV
-./venv/bin/python -m src.lsm_engine --option=defer|expand|abandon
+./venv/bin/python -m src.price_simulator      # recalibrate and show the price range widening
+./venv/bin/python -m src.financial_model      # the static NPV
+./venv/bin/python -m src.lsm_engine --option=defer
+./venv/bin/python -m src.lsm_engine --option=expand
+./venv/bin/python -m src.lsm_engine --option=abandon
 ./venv/bin/python -m src.sensitivity
 ```
 
 ## Project structure
 
-```
-config/       parameters.py (all inputs) + price_calibrated.json (fitted price process)
-data/         raw/ Elexon download (gitignored) · processed/ cleaned, calibration-ready CSVs
-src/          the model (one job per file, below)
-tests/        deterministic validation suite
-outputs/charts/  saved charts
-```
+Each file has one job, and the calculation is kept separate from the charts, so every module reads as plain maths.
 
-| Module | Job |
+| File | Job |
 |---|---|
-| `data_prep.py` | Raw Elexon feed → clean daily price series |
-| `price_simulator.py` | Calibrate + simulate two-factor price paths |
-| `generation_model.py` | Beta capacity factor → annual generation |
-| `financial_model.py` | Prices + generation → cash flows → NPV |
-| `lcoe.py` | Reconcile the model to the published LCOE benchmark |
-| `lsm_engine.py` | Value the defer / expand / abandon options |
-| `sensitivity.py` | Static-NPV tornado and break-evens |
-| `visualisation.py` | All charts (the only module that plots) |
+| config/parameters.py | Every input number, in one place |
+| src/data_prep.py | Turn the raw price download into a clean daily series |
+| src/price_simulator.py | Calibrate and simulate the electricity price |
+| src/generation_model.py | Turn the capacity factor into yearly output |
+| src/financial_model.py | Turn prices and output into cash flows and the NPV |
+| src/lcoe.py | Reconcile the model to the published cost benchmark |
+| src/lsm_engine.py | Value the defer, expand and abandon options |
+| src/sensitivity.py | Show which input moves the NPV most |
+| src/visualisation.py | Draw every chart |
+| tests/ | Checks on the maths, including the option engine against a known answer |
+```
