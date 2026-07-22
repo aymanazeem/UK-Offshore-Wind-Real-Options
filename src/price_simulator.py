@@ -1,297 +1,172 @@
 """
 Simulates many possible futures for the UK wholesale electricity price.
 
-The wind farm's revenue depends on a price nobody can know in advance, so rather than
-betting on a single forecast we generate thousands of plausible price paths over the
-project's life and pass them to the cash-flow and option-valuation models.
+The wind farm's revenue depends on a price nobody can know in advance, so instead of betting on
+one forecast we generate thousands of plausible price paths and value the project on all of them.
 
-How it works. Electricity prices tend to drift back toward a long-run average rather than
-wander off, so we use a mean-reverting model, an Ornstein-Uhlenbeck process, fitted to
-historical prices. We strip out the seasonal pattern first, model what's left, then add
-the season back and convert to yearly average prices.
+The price is modelled in three layers, all in log space so everything is a percentage move:
 
-Why we fit to monthly data. Fitting to daily prices makes the model snap back to average
-within about a day, which wrongly squashes the year-to-year spread. Fitting to monthly
-averages captures a realistic snap-back of about a month and gives a believable range of
-future prices, so that is the default.
+    log(price) = season(month)  +  short_term  +  long_term_level
 
-Caveat. This simple model settles into a fixed band of uncertainty after about a year and
-then stays there, so it under-states how uncertain prices really are decades out. A richer
-two-factor model would fix this and is the natural next step.
+  - season       a fixed repeating within-year pattern (winter peak, summer dip), fitted once.
+  - short_term   fast, temporary swings that always pull back toward zero (an Ornstein-Uhlenbeck,
+                 i.e. mean-reverting, process). Fitted to recent history.
+  - long_term    the slowly-moving equilibrium price level. It follows a random walk, so it does
+                 NOT pull back: small shocks accumulate and the range of possible prices keeps
+                 widening the further out we look. This is what gives decades-out uncertainty.
+
+This two-factor split (Schwartz-Smith, 2000) matters for the real options: deferring or expanding
+is only worth anything if the future is genuinely uncertain. A one-factor mean-reverting model
+would snap back to its average within weeks and leave the 35-year price fan almost flat, wrongly
+making every timing option worthless. The long-term random-walk factor fixes that.
+
+Calibration note: the short-term factor is fitted to ~2.5 years of recent monthly prices. The
+long-term volatility cannot be estimated from so little data, so it is a forward-looking
+assumption (config.PRICE_LT_VOL) and is always reported as a sensitivity.
 """
 
 from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import matplotlib
 
-matplotlib.use("Agg")  # headless, write PNG without a display
-import matplotlib.pyplot as plt  # noqa: E402
-import matplotlib.ticker as mticker  # noqa: E402
+from config import parameters as P
 
-from config import parameters as P  # noqa: E402
-
-# frequency -> (steps_per_year, dt in years)
-FREQUENCIES = {
-    "daily": (365, 1.0 / 365.25),
-    "weekly": (52, 7.0 / 365.25),
-    "monthly": (12, 1.0 / 12.0),
-}
-
-# Seasonal design, intercept + annual + semiannual harmonics in fractional year tau.
-SEASONAL_LABELS = ["1", "sin(2pi tau)", "cos(2pi tau)", "sin(4pi tau)", "cos(4pi tau)"]
+MONTHS_PER_YEAR = 12
+DT = 1.0 / MONTHS_PER_YEAR  # one calibration/simulation step is one month
 
 
-# Seasonal component
+# --------------------------------------------------------------------------------------------
+# Seasonal pattern
+# --------------------------------------------------------------------------------------------
 def fractional_year(dates: pd.Series) -> np.ndarray:
-    """Position within the calendar year in [0, 1), day-of-year / days-in-year."""
+    """Where each date sits in the calendar year, as a fraction in [0, 1)."""
     doy = dates.dt.dayofyear.to_numpy()
-    ylen = np.where(dates.dt.is_leap_year.to_numpy(), 366.0, 365.0)
-    return doy / ylen
+    year_len = np.where(dates.dt.is_leap_year.to_numpy(), 366.0, 365.0)
+    return doy / year_len
 
 
 def seasonal_design(tau: np.ndarray) -> np.ndarray:
-    """The predictor columns for the seasonal fit, evaluated at each date.
+    """Predictor columns for the seasonal fit: a constant plus one and two cycles per year.
 
-    A constant, plus one sine and cosine cycle per year and two cycles per year. Those four waves
-    let the fit bend to the winter peak, the summer dip and a smaller twice-a-year ripple. tau is
-    the position in the calendar year from 0 to 1, so the waves repeat cleanly every year."""
+    These four waves let the fitted season bend to a winter peak, a summer dip and a smaller
+    twice-a-year ripple. tau repeats every year, so the pattern repeats cleanly."""
     tau = np.asarray(tau, dtype=float)
-    return np.column_stack(
-        [
-            np.ones_like(tau),
-            np.sin(2 * np.pi * tau),
-            np.cos(2 * np.pi * tau),
-            np.sin(4 * np.pi * tau),
-            np.cos(4 * np.pi * tau),
-        ]
-    )
+    return np.column_stack([
+        np.ones_like(tau),
+        np.sin(2 * np.pi * tau), np.cos(2 * np.pi * tau),
+        np.sin(4 * np.pi * tau), np.cos(4 * np.pi * tau),
+    ])
 
 
-def fit_seasonal(dates: pd.Series, prices: np.ndarray) -> np.ndarray:
-    """Fit the seasonal waves to log price by least squares, return the 5 coefficients.
-
-    We fit in log price so the season is a percentage swing rather than a fixed pound amount,
-    which is how power prices move."""
-    tau = fractional_year(dates)
-    logp = np.log(prices)
-    coef, *_ = np.linalg.lstsq(seasonal_design(tau), logp, rcond=None)
+def fit_seasonal(dates: pd.Series, log_price: np.ndarray) -> np.ndarray:
+    """Least-squares fit of the seasonal waves to log price. Returns the 5 coefficients."""
+    coef, *_ = np.linalg.lstsq(seasonal_design(fractional_year(dates)), log_price, rcond=None)
     return coef
 
 
-def deseasonalise(tau: np.ndarray, prices: np.ndarray, seasonal_coef: np.ndarray) -> np.ndarray:
-    """Strip the fitted season out of log price, X = ln P - s(tau).
+# --------------------------------------------------------------------------------------------
+# Calibration
+# --------------------------------------------------------------------------------------------
+def _load_history(csv_path=P.PRICE_DAILY_CSV, since: str = P.PRICE_HISTORY_START) -> pd.DataFrame:
+    """Daily prices from `since` onward, positive only (log needs P > 0), date-sorted."""
+    df = (pd.read_csv(csv_path, parse_dates=["date"])
+          .sort_values("date").reset_index(drop=True))
+    df = df[df["price_gbp_per_mwh"] > 0].reset_index(drop=True)
+    # A boolean datetime comparison can crash pandas 3.0 in this environment, so we find the cut
+    # position with searchsorted and slice by position instead.
+    pos = int(np.searchsorted(df["date"].to_numpy(), np.datetime64(since), side="left"))
+    return df.iloc[pos:].reset_index(drop=True)
 
-    What is left is the deseasonalised series, the part we treat as random and hand to the OU fit.
-    Removing the season first stops the model mistaking the yearly pattern for randomness."""
-    return np.log(prices) - seasonal_design(tau) @ seasonal_coef
+
+def _monthly_deseasonalised(df: pd.DataFrame, seasonal_coef: np.ndarray) -> np.ndarray:
+    """Strip the season out of daily log price, then average to one value per calendar month.
+
+    We average the log residuals (not price levels) so there is no bias from taking a log of an
+    average. The result is the short-term series the mean-reverting model is fitted to."""
+    logp = np.log(df["price_gbp_per_mwh"].to_numpy())
+    residual = logp - seasonal_design(fractional_year(df["date"])) @ seasonal_coef
+    month_id = (df["date"].dt.year * 12 + df["date"].dt.month).to_numpy()
+    _, inverse = np.unique(month_id, return_inverse=True)   # unique() sorts, so months stay ordered
+    counts = np.bincount(inverse)
+    return np.bincount(inverse, weights=residual) / counts
 
 
-# Frequency aggregation. numpy only, pandas .resample() segfaults under this env.
-def aggregate_prices(df: pd.DataFrame, frequency: str) -> tuple[np.ndarray, np.ndarray]:
-    """Return (tau, price) at the requested frequency.
+def fit_short_term(x: np.ndarray) -> dict:
+    """Fit the monthly deseasonalised series as a mean-reverting (Ornstein-Uhlenbeck) process.
 
-    daily   -> as-is.
-    weekly  -> mean over consecutive 7-day blocks, series must be contiguous daily.
-    monthly -> mean over calendar (year, month) buckets.
+    We regress each month on the one before, x[t] = a + b*x[t-1] + noise (an AR(1) fit, which is
+    the exact best fit for this process). From (a, b) we recover the three plain-English numbers:
+      kappa  how fast a swing pulls back (bigger = faster),
+      level  the value it pulls back toward,
+      sigma  how big the monthly random shocks are (annualised).
     """
-    dates = df["date"]
-    price = df["price_gbp_per_mwh"].to_numpy()
-    tau = fractional_year(dates)
+    x0, x1 = x[:-1], x[1:]
+    (a, b), *_ = np.linalg.lstsq(np.column_stack([np.ones_like(x0), x0]), x1, rcond=None)
+    residual_sd = float((x1 - (a + b * x0)).std(ddof=2))
 
-    if frequency == "daily":
-        return tau, price
-
-    if frequency == "weekly":
-        n = len(price)
-        grp = np.arange(n) // 7
-        keep = grp < (n // 7)  # drop trailing partial week
-        g = grp[keep]
-        counts = np.bincount(g)
-        price_w = np.bincount(g, weights=price[keep]) / counts
-        tau_w = np.bincount(g, weights=tau[keep]) / counts
-        return tau_w, price_w
-
-    if frequency == "monthly":
-        ym = (dates.dt.year * 12 + dates.dt.month).to_numpy()
-        _, inv = np.unique(ym, return_inverse=True)
-        counts = np.bincount(inv)
-        price_m = np.bincount(inv, weights=price) / counts
-        tau_m = np.bincount(inv, weights=tau) / counts
-        return tau_m, price_m
-
-    raise ValueError(f"Unknown frequency {frequency!r}, expected one of {list(FREQUENCIES)}")
-
-
-# OU calibration by OLS AR(1)
-def fit_ou_ar1(X: np.ndarray, dt: float) -> dict:
-    """Fit the deseasonalised series as an AR(1), then convert to the three OU numbers kappa, mu,
-    sigma.
-
-    AR(1) means each step is a straight line on the step before plus noise, x1 = a + b*x0 + e. We
-    fit that line by OLS. For an OU process this OLS fit is the exact maximum likelihood estimate,
-    so it is not an approximation. b is the memory carried from one step to the next. We then back
-    out the OU parameters, kappa the reversion speed, mu the long-run level, sigma the volatility."""
-    x0, x1 = X[:-1], X[1:]
-    A = np.column_stack([np.ones_like(x0), x0])
-    (a, b), *_ = np.linalg.lstsq(A, x1, rcond=None)
-    resid = x1 - (a + b * x0)
-    resid_sd = float(resid.std(ddof=2))  # residual SD, 2 params fitted
-
-    kappa = float(-np.log(b) / dt)          # reversion speed, b near 1 reverts slowly, near 0 fast
-    mu = float(a / (1.0 - b))               # long-run level the series reverts to
-    sigma = float(resid_sd * np.sqrt(-2.0 * np.log(b) / (dt * (1.0 - b**2))))  # volatility per year
+    kappa = float(-np.log(b) / DT)
+    level = float(a / (1.0 - b))
+    sigma = float(residual_sd * np.sqrt(-2.0 * np.log(b) / (DT * (1.0 - b ** 2))))
     return {
         "kappa": kappa,
-        "mu": mu,
         "sigma": sigma,
-        "ar1_a": float(a),
-        "ar1_b": float(b),
-        "resid_sd": resid_sd,
-        "dt": float(dt),
-        "n_obs": int(len(x1)),
-        "half_life_years": float(np.log(2.0) / kappa),          # time for a gap from mu to halve
-        "stationary_sd": float(sigma / np.sqrt(2.0 * kappa)),   # long-run (stationary) SD
+        "level": level,
+        "x_last": float(x[-1]),              # today's short-term value, the simulation start
+        "half_life_days": float(np.log(2.0) / kappa * 365.0),
+        "n_months": int(len(x)),
     }
 
 
-def calibrate_all(csv_path=P.PRICE_DAILY_CSV, since: str | None = P.POST_CRISIS_START) -> dict:
-    """Fit the seasonal curve and an OU at each frequency. Return the dict written to
-    config/price_calibrated.json.
+def calibrate(csv_path=P.PRICE_DAILY_CSV) -> dict:
+    """Fit the seasonal pattern and the short-term factor, and record the long-term assumption.
+    Returns the dict written to config/price_calibrated.json."""
+    df = _load_history(csv_path)
+    seasonal_coef = fit_seasonal(df["date"], np.log(df["price_gbp_per_mwh"].to_numpy()))
+    short = fit_short_term(_monthly_deseasonalised(df, seasonal_coef))
 
-    The CSV spans 2018-2026. `since` defaults to P.POST_CRISIS_START and trims to the
-    post-crisis base window so the 2021-23 gas crisis can't dominate a 35-yr forward sim.
-    Pass since=None to fit the full history for the robustness comparison."""
-    df = (
-        pd.read_csv(csv_path, parse_dates=["date"])
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
-    df = df[df["price_gbp_per_mwh"] > 0].reset_index(drop=True)  # log needs P > 0
-    if since is not None:
-        # df is date-sorted, boolean-mask indexing on a datetime compare SIGBUSes in this
-        # env, py3.14 and pandas3.0.4, so locate the cut positionally and iloc-slice instead.
-        pos = int(np.searchsorted(df["date"].to_numpy(), np.datetime64(since), side="left"))
-        df = df.iloc[pos:].reset_index(drop=True)
-
-    seasonal_coef = fit_seasonal(df["date"], df["price_gbp_per_mwh"].to_numpy())
-
-    per_freq = {}
-    for freq, (spy, dt) in FREQUENCIES.items():
-        tau, price = aggregate_prices(df, freq)
-        X = deseasonalise(tau, price, seasonal_coef)
-        params = fit_ou_ar1(X, dt)
-        params["steps_per_year"] = spy
-        params["X_last"] = float(X[-1])  # simulation anchor
-        per_freq[freq] = params
-
-    yr = df["date"].dt.year.to_numpy()
-    annual_means = {
-        int(y): float(df["price_gbp_per_mwh"].to_numpy()[yr == y].mean())
-        for y in np.unique(yr)
-    }
-
+    years = df["date"].dt.year.to_numpy()
+    price = df["price_gbp_per_mwh"].to_numpy()
+    annual_means = {int(y): float(price[years == y].mean()) for y in np.unique(years)}
     return {
         "metadata": {
-            "model": "single-factor Ornstein-Uhlenbeck on deseasonalised log-price",
-            "method": "OLS AR(1) on deseasonalised log-price (exact MLE for OU)",
-            "calibrated_on": str(csv_path.relative_to(P.PROJECT_ROOT)),
-            "data_window": {
-                "start": str(df["date"].min().date()),
-                "end": str(df["date"].max().date()),
-                "n_obs": int(len(df)),
-            },
-            "generated_by": "src/price_simulator.py:write_calibration_json",
-            "calibration_since": since,
-            "note": (
-                f"The price CSV spans 2018-2026, but the base case is fit from {since} only. "
-                "The 2021-23 gas crisis is a once-in-a-generation shock, deliberately excluded "
-                "from the base so it can't dominate a 35-yr forward sim. It is kept in the data "
-                "for a separate robustness calibration, call with since=None."
-                if since is not None else
-                "Fit on the full 2018-2026 history including the 2021-23 gas crisis, the "
-                "robustness window, not the base case."
-            ),
+            "model": "two-factor: seasonal + mean-reverting short term + random-walk long term",
+            "history_window": [str(df["date"].min().date()), str(df["date"].max().date())],
+            "n_daily_obs": int(len(df)),
+            "note": ("Short-term factor fitted to this window. Long-term volatility is a "
+                     "forward-looking assumption (config.PRICE_LT_VOL), reported as a sensitivity."),
         },
-        "seasonal": {
-            "form": "intercept + annual + semiannual harmonics",
-            "design": SEASONAL_LABELS,
-            "tau_definition": "day_of_year / days_in_year",
-            "coefficients": [float(c) for c in seasonal_coef],
-        },
-        "base_post_crisis": {
-            "recommended_frequency": "monthly",
-            "recommended_reason": (
-                "Fitting to daily or weekly prices makes the model snap back to its average "
-                "too quickly, which wrongly narrows the year-to-year range. Monthly prices "
-                "give a realistic range that matches what has been seen historically."
-            ),
-            "daily": per_freq["daily"],
-            "weekly": per_freq["weekly"],
-            "monthly": per_freq["monthly"],
-        },
-        "simulation": {"start_date": P.SIM_START_DATE},
-        "historical_reference": {
-            "mean_price": float(df["price_gbp_per_mwh"].mean()),
-            "min_price": float(df["price_gbp_per_mwh"].min()),
-            "max_price": float(df["price_gbp_per_mwh"].max()),
-            "annual_means": annual_means,
-        },
+        "seasonal_coefficients": [float(c) for c in seasonal_coef],
+        "short_term": short,
+        "long_term": {"sigma_per_year": P.PRICE_LT_VOL, "drift_per_year": P.PRICE_LT_DRIFT},
+        "sim_start_date": P.SIM_START_DATE,
+        "history": {"mean_price": float(price.mean()), "annual_means": annual_means},
     }
 
 
-def write_calibration_json(path=P.PRICE_CALIBRATION_JSON, csv_path=P.PRICE_DAILY_CSV) -> dict:
-    """Calibrate and write config/price_calibrated.json. Returns the calibration dict."""
-    cal = calibrate_all(csv_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump(cal, fh, indent=2)
-    return cal
-
-
-def load_calibration(
-    window: str = P.PRICE_CALIBRATION_WINDOW,
-    frequency: str = P.PRICE_FREQUENCY,
-    path=P.PRICE_CALIBRATION_JSON,
-) -> dict:
-    """Load one (window, frequency) calibration, merged with the shared seasonal curve.
-
-    Regenerates the JSON on the fly if it is missing.
-    """
+def load_calibration(path=P.PRICE_CALIBRATION_JSON) -> dict:
+    """Load the calibration, regenerating it from the price CSV if the file is missing."""
     if not path.exists():
-        write_calibration_json(path)
-    with open(path) as fh:
-        cal = json.load(fh)
-
-    if window not in cal:
-        raise KeyError(f"window {window!r} not in calibration, have {list(cal)}")
-    if frequency not in cal[window]:
-        raise KeyError(f"frequency {frequency!r} not under {window!r}")
-
-    out = dict(cal[window][frequency])
-    out["seasonal_coef"] = np.asarray(cal["seasonal"]["coefficients"], dtype=float)
-    out["start_date"] = cal["simulation"]["start_date"]
-    out["window"] = window
-    out["frequency"] = frequency
-    return out
+        cal = calibrate()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cal, indent=2))
+        return cal
+    return json.loads(path.read_text())
 
 
+# --------------------------------------------------------------------------------------------
 # Simulation
+# --------------------------------------------------------------------------------------------
 @dataclass
 class PricePaths:
-    """Simulated annual-average price paths in £/MWh, with provenance for downstream use."""
-
+    """Simulated annual-average wholesale prices, £/MWh, shape (n_paths, horizon)."""
     annual_prices: np.ndarray
     calendar_year: np.ndarray
-    frequency: str
-    window: str
-    ou_params: dict
-    sample_paths: np.ndarray = field(default=None)
+    params: dict
 
     def percentiles(self, qs=(10, 50, 90)) -> dict:
         return {q: np.percentile(self.annual_prices, q, axis=0) for q in qs}
@@ -300,231 +175,95 @@ class PricePaths:
 def simulate_price_paths(
     n_paths: int = P.N_PATHS,
     horizon: int = P.OPERATING_LIFE_YEARS,
-    frequency: str = P.PRICE_FREQUENCY,
-    window: str = P.PRICE_CALIBRATION_WINDOW,
-    antithetic: bool = P.ANTITHETIC,
     seed: int = P.RANDOM_SEED,
-    n_sample_paths: int = 150,
+    antithetic: bool = P.ANTITHETIC,
+    lt_vol: float = P.PRICE_LT_VOL,
+    lt_drift: float = P.PRICE_LT_DRIFT,
 ) -> PricePaths:
-    """Simulate N annual-average price paths and return them in £/MWh.
+    """Simulate `n_paths` price futures, each `horizon` years of annual-average £/MWh.
 
-    Each path steps forward with the exact OU transition, then we add the season back and undo the
-    log to land in pounds. Antithetic variates run every set of random draws alongside its mirror
-    image, so a lucky run in one path is offset by its opposite and the average settles down with
-    fewer paths."""
-    cal = load_calibration(window, frequency)
-    kappa, mu, sigma = cal["kappa"], cal["mu"], cal["sigma"]
-    dt = cal["dt"]
-    spy = cal["steps_per_year"]
-    x0 = cal["X_last"]
-    seasonal_coef = cal["seasonal_coef"]
+    We step month by month. The short-term factor takes an exact mean-reverting step; the
+    long-term level takes a random-walk step. We add the season back, undo the log to get a £
+    price, and average the 12 months into one annual price. `lt_vol`/`lt_drift` are exposed so the
+    sensitivity analysis can flex the long-term assumption without re-calibrating."""
+    cal = load_calibration()
+    st = cal["short_term"]
+    kappa, sigma_st, level, x_last = st["kappa"], st["sigma"], st["level"], st["x_last"]
+    seasonal_coef = np.asarray(cal["seasonal_coefficients"], dtype=float)
 
     if antithetic and n_paths % 2:
-        n_paths += 1  # need an even count to mirror
+        n_paths += 1  # need an even count to pair each draw with its mirror
 
-    # Exact one-step OU update. ek is how much of the gap from mu survives one step, sd_step is the
-    # exact noise SD for a step of length dt. Both come straight from the OU solution, so stepping
-    # monthly carries no discretisation error, unlike a naive Euler step.
-    ek = np.exp(-kappa * dt)
-    sd_step = sigma * np.sqrt((1.0 - np.exp(-2.0 * kappa * dt)) / (2.0 * kappa))
+    # Exact one-month steps (no discretisation error). The short-term step keeps a fraction `decay`
+    # of the current swing and adds noise; the long-term step just adds drift and noise.
+    decay = np.exp(-kappa * DT)
+    sd_short = sigma_st * np.sqrt((1.0 - np.exp(-2.0 * kappa * DT)) / (2.0 * kappa))
+    sd_long = lt_vol * np.sqrt(DT)
 
-    # precompute the seasonal value at every step
-    start = pd.Timestamp(cal["start_date"])
-    start_off = float(fractional_year(pd.Series([start]))[0])
-    total_steps = horizon * spy
-    step_i = np.arange(total_steps)
-    tau_steps = (start_off + (step_i + 1) * dt) % 1.0
-    s_steps = seasonal_design(tau_steps) @ seasonal_coef
+    # Split today's deviation: the reverting part is the short-term factor, the level is long-term.
+    short = np.full(n_paths, x_last - level, dtype=float)
+    long = np.full(n_paths, level, dtype=float)
+
+    # Precompute the seasonal value at each simulated month.
+    start = pd.Timestamp(cal["sim_start_date"])
+    start_frac = float(fractional_year(pd.Series([start]))[0])
+    step_tau = (start_frac + (np.arange(horizon * MONTHS_PER_YEAR) + 1) * DT) % 1.0
+    season = seasonal_design(step_tau) @ seasonal_coef
 
     rng = np.random.default_rng(seed)
     half = n_paths // 2
-
-    x = np.full(n_paths, x0, dtype=float)
     annual = np.empty((n_paths, horizon), dtype=float)
 
     step = 0
     for yr in range(horizon):
-        acc = np.zeros(n_paths)
-        for _ in range(spy):
-            if antithetic:
-                z_half = rng.standard_normal(half)
-                z = np.concatenate([z_half, -z_half])  # each draw paired with its negative
-            else:
-                z = rng.standard_normal(n_paths)
-            x = mu + (x - mu) * ek + sd_step * z  # one OU step, revert toward mu then add the noise
-            acc += np.exp(s_steps[step] + x)      # add the season back and undo the log, into £/MWh
+        monthly_price_sum = np.zeros(n_paths)
+        for _ in range(MONTHS_PER_YEAR):
+            z_short, z_long = _draws(rng, n_paths, half, antithetic)
+            short = short * decay + sd_short * z_short
+            long = long + lt_drift * DT + sd_long * z_long
+            monthly_price_sum += np.exp(season[step] + short + long)
             step += 1
-        annual[:, yr] = acc / spy                 # average the within-year steps into one price
+        annual[:, yr] = monthly_price_sum / MONTHS_PER_YEAR
 
-    # x = midpoint of each annual-average window, anchored at the true start fraction
-    calendar_year = float(start.year) + start_off + 0.5 + np.arange(horizon)
-    sample = annual[:n_sample_paths].copy()
-    return PricePaths(
-        annual_prices=annual,
-        calendar_year=calendar_year,
-        frequency=frequency,
-        window=window,
-        ou_params={k: cal[k] for k in ("kappa", "mu", "sigma", "half_life_years", "n_obs")},
-        sample_paths=sample,
-    )
+    calendar_year = start.year + start_frac + 0.5 + np.arange(horizon)
+    return PricePaths(annual_prices=annual, calendar_year=calendar_year,
+                      params={"kappa": kappa, "sigma_short": sigma_st, "level": level,
+                              "sigma_long": lt_vol, "half_life_days": st["half_life_days"],
+                              "n_months": st["n_months"]})
 
 
-# Chart 1, fan chart
-def _load_history(csv_path=P.PRICE_DAILY_CSV) -> pd.DataFrame:
-    df = pd.read_csv(csv_path, parse_dates=["date"]).sort_values("date").reset_index(drop=True)
-    df["year_frac"] = df["date"].dt.year + fractional_year(df["date"])
-    return df
-
-
-def _history_aggregates(history: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Monthly- and annual-average historical series with calendar-x positions."""
-    yf = history["year_frac"].to_numpy()
-    price = history["price_gbp_per_mwh"].to_numpy()
-
-    ym = (history["date"].dt.year * 12 + history["date"].dt.month).to_numpy()
-    _, inv = np.unique(ym, return_inverse=True)
-    cnt = np.bincount(inv)
-    monthly = pd.DataFrame({
-        "year_frac": np.bincount(inv, weights=yf) / cnt,
-        "price": np.bincount(inv, weights=price) / cnt,
-    })
-
-    yr = history["date"].dt.year.to_numpy()
-    uy, inv_y = np.unique(yr, return_inverse=True)
-    cnt_y = np.bincount(inv_y)
-    annual = pd.DataFrame({
-        "year": uy,
-        "year_frac": np.bincount(inv_y, weights=yf) / cnt_y,
-        "price": np.bincount(inv_y, weights=price) / cnt_y,
-    })
-    return monthly, annual
-
-
-def plot_fan_chart(
-    paths: PricePaths,
-    history: pd.DataFrame,
-    save_path=None,
-    title: str | None = None,
-) -> "tuple[plt.Figure, plt.Axes]":
-    """Chart 1, the simulated price fan. Shows sample paths, the P10 to P90 band with the
-    P50 median, and a historical overlay.
-
-    The forecast is an annual average, so it is compared against historical monthly and
-    annual averages. Raw daily prices are shown faintly for context."""
-    if save_path is None:
-        save_path = P.CHARTS_DIR / "chart1_price_fan.png"
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-
-    x = paths.calendar_year
-    pct = paths.percentiles((10, 50, 90))
-    forecast_start = float(history["year_frac"].iloc[-1])
-    monthly, annual = _history_aggregates(history)
-
-    fig, ax = plt.subplots(figsize=(12, 6.5))
-
-    # faint daily history for context
-    ax.plot(history["year_frac"], history["price_gbp_per_mwh"],
-            color="0.45", lw=0.5, alpha=0.35, zorder=2,
-            label="Historical daily (context)")
-    # monthly average, like-for-like with the model
-    ax.plot(monthly["year_frac"], monthly["price"],
-            color="#222222", lw=1.6, alpha=0.9, zorder=6,
-            label="Historical monthly avg")
-    # annual means
-    ax.scatter(annual["year_frac"], annual["price"], color="#d62728", s=55,
-               zorder=7, edgecolor="white", linewidth=0.8,
-               label="Historical annual mean")
-
-    # Sample simulated paths, light grey.
-    for i in range(paths.sample_paths.shape[0]):
-        ax.plot(x, paths.sample_paths[i], color="0.6", alpha=0.08, lw=0.6, zorder=3)
-
-    # P10-P90 band and P50 median.
-    ax.fill_between(x, pct[10], pct[90], color="#1f77b4", alpha=0.22,
-                    label="Forecast P10-P90", zorder=4)
-    ax.plot(x, pct[50], color="#1f77b4", lw=2.2, label="Forecast P50 (median)", zorder=5)
-    ax.plot(x, pct[10], color="#1f77b4", lw=1.0, ls="--", alpha=0.8, zorder=5)
-    ax.plot(x, pct[90], color="#1f77b4", lw=1.0, ls="--", alpha=0.8, zorder=5)
-
-    # scale y to the averaged series, not the daily spikes
-    daily_max = float(history["price_gbp_per_mwh"].max())
-    y_top = max(float(monthly["price"].max()), float(pct[90].max())) * 1.35
-    ax.set_ylim(0, y_top)
-    if daily_max > y_top:
-        ax.text(history["year_frac"].iloc[0] + 0.05, y_top * 0.97,
-                f"(daily peaks to £{daily_max:.0f}, clipped)", fontsize=8,
-                color="0.4", va="top")
-
-    # Forecast start marker.
-    ax.axvline(forecast_start, color="grey", ls=":", lw=1.2, zorder=4)
-    ax.text(forecast_start + 0.25, y_top * 0.04, "forecast →", fontsize=9, color="grey")
-
-    op = paths.ou_params
-    box = (
-        f"Single-factor OU · {paths.window} · {paths.frequency}\n"
-        f"κ={op['kappa']:.2f}   μ={op['mu']:.3f}   σ={op['sigma']:.3f}\n"
-        f"half-life={op['half_life_years'] * 365:.0f} days   "
-        f"n_paths={paths.annual_prices.shape[0]:,}"
-    )
-    ax.text(0.015, 0.97, box, transform=ax.transAxes, fontsize=9, va="top", ha="left",
-            family="monospace",
-            bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="0.7", alpha=0.92))
-
-    if title is None:
-        title = "Chart 1: Simulated GB wholesale price fan (single-factor OU, monthly-calibrated)"
-    ax.set_title(title, fontsize=12.5, pad=12)
-    ax.set_xlabel("Year")
-    ax.set_ylabel("Wholesale price (£/MWh, real 2024), annual average")
-    ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper right", fontsize=8.5, framealpha=0.92, ncol=2)
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    return fig, ax
-
-
-# Diagnostics and CLI
-def realism_report(paths: PricePaths, cal_full: dict) -> str:
-    pct = paths.percentiles((10, 50, 90))
-    lines = [
-        f"Annual-average price band, {paths.window}, {paths.frequency} "
-        f"(n={paths.annual_prices.shape[0]:,})",
-        f"  {'year':>5} {'P10':>7} {'P50':>7} {'P90':>7} {'P90/P10':>8}",
-    ]
-    for yr in (0, 4, 14, 29):
-        p10, p50, p90 = pct[10][yr], pct[50][yr], pct[90][yr]
-        lines.append(f"  {yr + 1:>5} {p10:>7.1f} {p50:>7.1f} {p90:>7.1f} {p90 / p10:>8.2f}")
-    hist = cal_full["historical_reference"]
-    am = ", ".join(f"{y}: £{v:.1f}" for y, v in hist["annual_means"].items())
-    lines.append(f"  historical annual means -> {am}   (overall £{hist['mean_price']:.1f})")
-    return "\n".join(lines)
+def _draws(rng, n_paths, half, antithetic):
+    """Two independent standard-normal shocks per step, antithetic-mirrored if requested."""
+    if antithetic:
+        zs = rng.standard_normal((2, half))
+        z = np.concatenate([zs, -zs], axis=1)  # pair each draw with its negative
+        return z[0], z[1]
+    z = rng.standard_normal((2, n_paths))
+    return z[0], z[1]
 
 
 def main(argv=None) -> None:
+    """Recalibrate from the price CSV and print the price fan's widening over the horizon."""
     argv = sys.argv[1:] if argv is None else argv
-    frequency = P.PRICE_FREQUENCY
-    n_paths = P.N_PATHS
-    for arg in argv:
-        if arg.startswith("--freq="):
-            frequency = arg.split("=", 1)[1]
-        elif arg.startswith("--n="):
-            n_paths = int(arg.split("=", 1)[1])
+    n_paths = next((int(a.split("=")[1]) for a in argv if a.startswith("--n=")), P.N_PATHS)
 
-    print("Calibrating and writing", P.PRICE_CALIBRATION_JSON.name, "...")
-    cal_full = write_calibration_json()
-    for f in FREQUENCIES:
-        d = cal_full["base_post_crisis"][f]
-        print(f"  {f:8s} kappa={d['kappa']:8.3f}  mu={d['mu']:7.4f}  "
-              f"sigma={d['sigma']:7.4f}  half-life={d['half_life_years'] * 365:6.1f}d")
+    cal = calibrate()
+    P.PRICE_CALIBRATION_JSON.write_text(json.dumps(cal, indent=2))
+    st = cal["short_term"]
+    print(f"Calibrated on {cal['metadata']['history_window'][0]} .. "
+          f"{cal['metadata']['history_window'][1]} ({st['n_months']} months)")
+    print(f"  short-term: kappa={st['kappa']:.2f} (half-life {st['half_life_days']:.0f} days), "
+          f"sigma={st['sigma']:.3f}, level={st['level']:.3f}")
+    print(f"  long-term : sigma={P.PRICE_LT_VOL:.3f}/yr (assumption)")
 
-    print(f"\nSimulating {n_paths:,} paths at '{frequency}' frequency ...")
-    paths = simulate_price_paths(n_paths=n_paths, frequency=frequency)
-    print(realism_report(paths, cal_full))
-
-    history = _load_history()
-    out = P.CHARTS_DIR / "chart1_price_fan.png"
-    plot_fan_chart(paths, history, save_path=out)
-    print(f"\nSaved fan chart -> {out}")
+    paths = simulate_price_paths(n_paths=n_paths)
+    pct = paths.percentiles()
+    print(f"\nPrice fan over the horizon ({n_paths:,} paths):")
+    print(f"  {'year':>5} {'P10':>7} {'P50':>7} {'P90':>7} {'P90/P10':>8}")
+    for yr in (0, 4, 14, 24, 34):
+        p10, p50, p90 = pct[10][yr], pct[50][yr], pct[90][yr]
+        print(f"  {yr + 1:>5} {p10:>7.1f} {p50:>7.1f} {p90:>7.1f} {p90 / p10:>8.2f}")
+    print("  (P90/P10 should GROW with the horizon under the two-factor model)")
 
 
 if __name__ == "__main__":

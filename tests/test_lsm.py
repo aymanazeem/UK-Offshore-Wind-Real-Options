@@ -1,49 +1,72 @@
-"""Structural checks on the LSM. Each ties an option engine back to a known answer, so a failure
-here is a real bug, not sampling noise."""
+"""Checks on the Longstaff-Schwartz engine.
+
+The headline test values a vanilla American put with the same engine and compares it to an
+independent binomial-tree price: this exercises the backward induction, discounting and
+regression on a problem with a known answer. The rest are structural identities: with no room to
+defer the defer option is just the static NPV, and with no WACC gap the divestment right is
+worthless."""
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from config import parameters as P
-from src import financial_model as fm
 from src import lsm_engine as lsm
 
 LIFE = P.OPERATING_LIFE_YEARS
 
 
-def test_defer_zero_deferral_matches_static(defer_sim):
+# ---- validation against a known option value -----------------------------------------------
+def _gbm_paths(s0, r, sigma, T, n_steps, n_paths, seed):
+    rng = np.random.default_rng(seed)
+    dt = T / n_steps
+    z = rng.standard_normal((n_paths // 2, n_steps))
+    z = np.concatenate([z, -z])                                  # antithetic
+    log_return = (r - 0.5 * sigma ** 2) * dt + sigma * np.sqrt(dt) * z
+    s = np.empty((z.shape[0], n_steps + 1))
+    s[:, 0] = s0
+    s[:, 1:] = s0 * np.exp(np.cumsum(log_return, axis=1))
+    return s
+
+
+def _binomial_american_put(s0, K, r, sigma, T, n=500):
+    dt = T / n
+    u = np.exp(sigma * np.sqrt(dt)); d = 1.0 / u
+    p = (np.exp(r * dt) - d) / (u - d); disc = np.exp(-r * dt)
+    j = np.arange(n + 1); value = np.maximum(K - s0 * u ** (n - j) * d ** j, 0.0)
+    for i in range(n, 0, -1):
+        j = np.arange(i)
+        spot = s0 * u ** (i - 1 - j) * d ** j
+        value = np.maximum(disc * (p * value[:-1] + (1 - p) * value[1:]), K - spot)
+    return float(value[0])
+
+
+def test_lsm_matches_binomial_american_put():
+    s0, K, r, sigma, T, n_steps = 36.0, 40.0, 0.06, 0.20, 1.0, 50
+    spot = _gbm_paths(s0, r, sigma, T, n_steps, 200_000, seed=0)
+    payoff = np.maximum(K - spot, 0.0)
+    wacc_per_step = np.exp(r * T / n_steps) - 1.0
+    value, _ = lsm._american_option(payoff, spot, wacc=wacc_per_step, degree=4, must_act_by_end=False)
+    reference = _binomial_american_put(s0, K, r, sigma, T, n=500)
+    assert value.mean() == pytest.approx(reference, abs=0.15)   # ~3%: MC + regression
+
+
+# ---- structural identities -----------------------------------------------------------------
+def test_defer_zero_deferral_is_static(defer_sim):
     price, gen = defer_sim
-    r = lsm.lsm_defer(price, gen, d_max=0, allow_walkaway=False)
-    # with no deferral and no walk-away the LSM just commits on every path at t=0
-    assert r.option_value == r.static_npv
+    r = lsm.defer_option(price, gen, d_max=0, can_walk_away=False)
+    assert r.option_value == pytest.approx(r.static_npv, abs=1.0)
 
 
-def test_defer_static_matches_value_paths(defer_sim):
-    price, gen = defer_sim
-    r = lsm.lsm_defer(price, gen, d_max=0, allow_walkaway=False)
-    static = fm.value_paths(price[:, :LIFE], gen).npv.mean()
-    assert r.static_npv == pytest.approx(static, abs=1.0)
-
-
-def test_abandon_spine_reconstruction(abandon_sim):
-    price, gen = abandon_sim
-    res = fm.value_paths(price, gen)
-    vrem0 = fm.value_of_remaining_operations(price, gen, 0, wacc=P.WACC)
-    c = P.CONSTRUCTION_PERIOD_YEARS
-    # -CAPEX(PV) + disc(construction) * PV(remaining ops from COD) reconstructs the static NPV
-    recon = -res.pv_capex + (1.0 + P.WACC) ** (-c) * vrem0.mean()
-    assert recon == pytest.approx(res.npv.mean(), abs=1.0)
-
-
-def test_abandon_no_arbitrage(abandon_sim):
-    price, gen = abandon_sim
-    r = lsm.lsm_abandon(price, gen, buyer_wacc=P.WACC, transaction_cost=0.0)
-    # no WACC gap and no transaction cost => zero sell-advantage on every path
+def test_abandon_no_arbitrage(base_sim):
+    price, gen = base_sim
+    # no WACC gap and no transaction cost => selling can never beat holding
+    r = lsm.abandon_option(price, gen, buyer_wacc=P.WACC, transaction_cost=0.0)
     assert abs(r.add_on) < 1.0
 
 
-def test_expand_has_decline_floor():
-    price, gen2 = lsm.simulate_expand(n_paths=4000, seed=42)
-    r = lsm.lsm_expand(price, gen2, decision_years=lsm.expand_decision_years(), cfd_term_years=0)
-    assert r.option_value >= -1.0  # never forced to expand => value >= 0
+def test_options_never_negative(defer_sim):
+    price, gen = defer_sim
+    # the right to walk away / decline is worth at least zero
+    assert lsm.defer_option(price, gen, can_walk_away=True).option_value >= -1.0

@@ -1,84 +1,89 @@
 """
-One-at-a-time sensitivity of the static NPV. Which sourced input range moves value most, and
-where each lever must sit for the project to break even.
+Sensitivity of the static NPV: which input, moved across its sourced range, changes the answer
+most, and how far each would have to move for the project to break even.
 
-Prices and generation are simulated once and held fixed. Only the economics flex, so each bar
-isolates one assumption. Reported on the mean NPV. The flat-fan, CfD-dominated distribution is
-tight enough that the mean approximates the central path, verified in financial_model.
-
-OPEX is split into its location-specific TNUoS component and the rest, O&M and insurance. TNUoS
-is both the largest single driver and the most uncertain input, so it earns its own lever rather
-than hiding inside a combined OPEX bar.
+We simulate prices and generation once and hold them fixed, then flex one economic input at a
+time (this is a "one-at-a-time tornado"). Each bar therefore isolates a single assumption. The
+grid charge (TNUoS) is pulled out of OPEX into its own lever because it is both the biggest and
+the most location-dependent cost.
 """
 
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 
 import numpy as np
-import matplotlib
+from scipy.optimize import brentq
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-from scipy.optimize import brentq  # noqa: E402
+from config import parameters as P
+from src.price_simulator import simulate_price_paths
+from src.generation_model import simulate_generation
+from src.financial_model import value_paths
 
-from config import parameters as P  # noqa: E402
-from src.price_simulator import simulate_price_paths  # noqa: E402
-from src.generation_model import simulate_generation  # noqa: E402
-from src.financial_model import value_paths  # noqa: E402
+_OM = P.OPEX_OM_INSURANCE_K
+_TN = P.OPEX_TNUOS_K
 
-OC = P.OPEX_COMPONENTS_PER_MW_YEAR_K
-OMINS = {k: OC["om"][k] + OC["insurance"][k] for k in ("low", "central", "high")}  # non-locational
-TNUOS = OC["connection_uos"]
-
-# label -> (low, central, high, build econ-kwargs from a scalar value)
+# Each lever: (label, {low, central, high}, build the value_paths overrides from a scalar value).
+# The two OPEX levers each hold the other component at its central value.
 LEVERS = [
-    ("CAPEX (£/kW)",            P.CAPEX_PER_KW,            lambda v: {"capex_per_kw": v}),
-    ("TNUoS (k£/MW/yr)",        TNUOS,                     lambda v: {"opex_per_mw_year_k": OMINS["central"] + v}),
-    ("O&M + insurance (k£/MW/yr)", OMINS,                  lambda v: {"opex_per_mw_year_k": TNUOS["central"] + v}),
-    ("WACC (%)",                P.WACC_SENSITIVITY,        lambda v: {"wacc": v}),
-    ("Capacity factor",         P.CF_RANGE,                lambda v: {"cf": v}),
-    ("CfD strike (£/MWh)",      P.CFD_STRIKE_SENSITIVITY,  lambda v: {"cfd_strike": v}),
+    ("CAPEX (£/kW)",               P.CAPEX_PER_KW,          lambda v: {"capex_per_kw": v}),
+    ("Grid charge TNUoS (k£/MW/yr)", _TN,                   lambda v: {"opex_per_mw_year_k": _OM["central"] + v}),
+    ("O&M + insurance (k£/MW/yr)", _OM,                     lambda v: {"opex_per_mw_year_k": _TN["central"] + v}),
+    ("WACC",                       P.WACC_RANGE,            lambda v: {"wacc": v}),
+    ("Capacity factor",            P.CF_RANGE,              lambda v: {"cf": v}),
+    ("CfD strike (£/MWh)",         P.CFD_STRIKE_RANGE,      lambda v: {"cfd_strike": v}),
+    ("Merchant capture",           P.MERCHANT_CAPTURE_RANGE, lambda v: {"capture_factor": v}),
 ]
 
-# brackets for the break-even root-find, the lever value that sets NPV=0
-BREAKEVEN_BRACKET = {
-    "CAPEX (£/kW)": (200.0, 12_000.0),
-    "TNUoS (k£/MW/yr)": (-300.0, 400.0),
-    "O&M + insurance (k£/MW/yr)": (-300.0, 400.0),
-    "WACC (%)": (0.001, 0.40),
-    "Capacity factor": (0.10, 0.99),
+# Search brackets for the break-even root-find (the lever value that makes mean NPV = 0).
+BREAKEVEN_BRACKETS = {
+    "CAPEX (£/kW)": (100.0, 12_000.0),
+    "Grid charge TNUoS (k£/MW/yr)": (-400.0, 400.0),
+    "O&M + insurance (k£/MW/yr)": (-400.0, 400.0),
+    "WACC": (0.001, 0.40),
+    "Capacity factor": (0.10, 2.00),
     "CfD strike (£/MWh)": (0.0, 400.0),
+    "Merchant capture": (0.0, 6.0),
 }
 
 
-def npv_mean(price, gen, *, cf=P.CF_MEAN, **econ) -> float:
-    """Mean NPV in £ on fixed paths. `cf` rescales mean generation linearly. The rest,
-    capex_per_kw, opex_per_mw_year_k, wacc and cfd_strike, pass straight to value_paths."""
+@dataclass
+class Lever:
+    label: str
+    low: float
+    central: float
+    high: float
+    npv_low: float
+    npv_high: float
+    breakeven: float | None
+
+    @property
+    def swing(self) -> float:
+        return abs(self.npv_high - self.npv_low)
+
+
+def npv_mean(price, gen, **overrides) -> float:
+    """Mean NPV (£) on the fixed paths. `cf` rescales generation linearly (generation is
+    proportional to capacity factor); everything else passes straight to value_paths."""
+    cf = overrides.pop("cf", P.CF_MEAN)
     g = gen if cf == P.CF_MEAN else gen * (cf / P.CF_MEAN)
-    return float(value_paths(price, g, **econ).npv.mean())
+    return float(value_paths(price, g, **overrides).npv.mean())
 
 
-def breakeven(price, gen, label, build) -> float | None:
-    """Find the lever value that drives mean NPV to exactly zero, or None if it never crosses the
-    bracket. brentq is a root-finder, it starts from a low and high guess that straddle zero and
-    closes in on the crossing."""
-    lo, hi = BREAKEVEN_BRACKET[label]
-
-    def f(v):
-        kw = build(v)
-        return npv_mean(price, gen, **kw)
-
+def _breakeven(price, gen, label, build) -> float | None:
+    lo, hi = BREAKEVEN_BRACKETS[label]
+    f = lambda v: npv_mean(price, gen, **build(v))
     try:
-        if f(lo) * f(hi) > 0:  # same sign at both ends means no crossing in between
+        if f(lo) * f(hi) > 0:      # same sign at both ends -> no zero crossing in the bracket
             return None
         return float(brentq(f, lo, hi, xtol=1e-4))
     except ValueError:
         return None
 
 
-def compute(n_paths: int = P.N_PATHS, seed: int = P.RANDOM_SEED):
-    """Simulate once, then sweep each lever across low, central and high, and solve its break-even."""
+def compute(n_paths: int = P.N_PATHS, seed: int = P.RANDOM_SEED) -> tuple[float, list[Lever]]:
+    """Return (base-case mean NPV, levers sorted by swing ascending for a tornado)."""
     life = P.OPERATING_LIFE_YEARS
     pp = simulate_price_paths(n_paths=n_paths, horizon=life, seed=seed)
     gp = simulate_generation(n_paths=n_paths, horizon=life, seed=seed + 1)
@@ -86,124 +91,28 @@ def compute(n_paths: int = P.N_PATHS, seed: int = P.RANDOM_SEED):
     price, gen = pp.annual_prices[:n], gp.generation_mwh[:n]
 
     base = npv_mean(price, gen)
-    rows = []
+    levers = []
     for label, rng, build in LEVERS:
-        lo = npv_mean(price, gen, **build(rng["low"]))
-        hi = npv_mean(price, gen, **build(rng["high"]))
-        be = breakeven(price, gen, label, build)
-        rows.append({
-            "label": label, "rng": rng, "build": build,
-            "npv_low": lo, "npv_high": hi, "breakeven": be,
-            "swing": abs(hi - lo),
-        })
-    rows.sort(key=lambda r: r["swing"])  # order for the tornado, narrowest swing first
-    return base, rows, price, gen
-
-
-# Chart 3, tornado and break-even on the hero lever TNUoS
-def plot_sensitivity(base, rows, price, gen, save_path=None):
-    if save_path is None:
-        save_path = P.CHARTS_DIR / "chart3_sensitivity.png"
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    bn = 1e9
-
-    fig, (axL, axR) = plt.subplots(1, 2, figsize=(14, 5.6))
-
-    # Left panel, tornado, widest swing on top
-    y = np.arange(len(rows))
-    for i, r in enumerate(rows):
-        lo, hi = r["npv_low"] / bn, r["npv_high"] / bn
-        left, right = min(lo, hi), max(lo, hi)
-        axL.barh(i, right - left, left=left, height=0.62, color="#9ecae1",
-                 edgecolor="0.4", linewidth=0.6, zorder=3)
-        # endpoint labels = the input values that produce each NPV end
-        axL.text(lo, i + 0.30, f"{_fmt(r,'low')}", fontsize=7.5, ha="center", va="bottom", color="#08519c")
-        axL.text(hi, i + 0.30, f"{_fmt(r,'high')}", fontsize=7.5, ha="center", va="bottom", color="#08519c")
-    axL.axvline(base / bn, color="0.35", lw=1.4, zorder=4, label=f"base £{base/bn:.2f}bn")
-    axL.axvline(0, color="#d62728", lw=2, zorder=4, label="break-even")
-    axL.set_yticks(y)
-    axL.set_yticklabels([r["label"] for r in rows], fontsize=9)
-    axL.set_xlabel("NPV (£bn, real 2024)")
-    axL.set_title("Tornado: NPV sensitivity to each sourced input range")
-    axL.legend(loc="lower right", fontsize=8)
-    axL.grid(True, axis="x", alpha=0.25)
-
-    # Right panel, NPV vs TNUoS, the hero lever, with sourced points and break-even crossing
-    tn = TNUOS
-    xs = np.linspace(0, max(160, tn["high"] + 20), 60)
-    ys = np.array([npv_mean(price, gen, opex_per_mw_year_k=OMINS["central"] + x) for x in xs]) / bn
-    axR.plot(xs, ys, color="#08519c", lw=2)
-    axR.axhline(0, color="#d62728", lw=2)
-    for k, c in [("low", "#2ca02c"), ("central", "#ff7f0e"), ("high", "#d62728")]:
-        xv = tn[k]
-        yv = npv_mean(price, gen, opex_per_mw_year_k=OMINS["central"] + xv) / bn
-        axR.scatter([xv], [yv], color=c, s=55, zorder=5, edgecolor="white", linewidth=0.8)
-        axR.text(xv, yv + 0.06, f"{k}\n£{xv:.0f}k", fontsize=8, ha="center", va="bottom", color=c)
-    be = next(r["breakeven"] for r in rows if r["label"].startswith("TNUoS"))
-    if be is not None:
-        axR.scatter([be], [0], color="black", s=45, zorder=6)
-        axR.annotate(f"break-even\nTNUoS £{be:.0f}k/MW/yr", (be, 0), xytext=(be, 0.55),
-                     fontsize=8.5, ha="center", arrowprops=dict(arrowstyle="->", color="0.3"))
-    axR.set_xlabel("TNUoS connection charge (k£/MW/yr)")
-    axR.set_ylabel("NPV (£bn, real 2024)")
-    axR.set_title("Hero lever: NPV vs TNUoS")
-    axR.grid(True, alpha=0.25)
-
-    fig.suptitle(f"Chart 3: Static-NPV sensitivity ({price.shape[0]:,} paths, base £{base/bn:.2f}bn)",
-                 fontsize=12.5)
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    return fig, (axL, axR)
-
-
-def _fmt(r, end) -> str:
-    """Format the input value at the low or high end of a lever for the tornado labels."""
-    v = r["rng"][end]
-    lab = r["label"]
-    if lab.startswith("WACC"):
-        return f"{v:.1%}"
-    if lab.startswith("Capacity"):
-        return f"{v:.2f}"
-    return f"{v:.0f}"
-
-
-def report(base, rows) -> str:
-    bn = 1e9
-    lines = [
-        f"Static NPV base case: £{base / bn:.2f}bn   (break-even target: £0)",
-        f"{'lever':<28}{'low input':>12}{'high input':>12}{'NPV swing £bn':>15}{'break-even':>16}",
-    ]
-    for r in reversed(rows):  # widest first
-        rng = r["rng"]
-        be = r["breakeven"]
-        be_s = "n/a" if be is None else (f"{be:.1%}" if r["label"].startswith("WACC")
-                                       else f"{be:.2f}" if r["label"].startswith("Capacity")
-                                       else f"{be:.0f}")
-        lo_s = f"{rng['low']:.3g}"
-        hi_s = f"{rng['high']:.3g}"
-        lines.append(
-            f"{r['label']:<28}{lo_s:>12}{hi_s:>12}"
-            f"{(r['npv_high'] - r['npv_low']) / bn:>+15.2f}{be_s:>16}"
-        )
-    lines.append("  break-even = lever value, holding all others central, that sets NPV=0. "
-                 "Central CfD strike £90.91, central TNUoS £83.4k")
-    return "\n".join(lines)
+        levers.append(Lever(
+            label=label, low=rng["low"], central=rng["central"], high=rng["high"],
+            npv_low=npv_mean(price, gen, **build(rng["low"])),
+            npv_high=npv_mean(price, gen, **build(rng["high"])),
+            breakeven=_breakeven(price, gen, label, build)))
+    levers.sort(key=lambda x: x.swing)
+    return base, levers
 
 
 def main(argv=None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    n_paths = P.N_PATHS
-    for arg in argv:
-        if arg.startswith("--n="):
-            n_paths = int(arg.split("=", 1)[1])
-
-    print(f"Sweeping static-NPV sensitivities on {n_paths:,} fixed paths ...")
-    base, rows, price, gen = compute(n_paths=n_paths)
-    print(report(base, rows))
-
-    out = P.CHARTS_DIR / "chart3_sensitivity.png"
-    plot_sensitivity(base, rows, price, gen, save_path=out)
-    print(f"\nSaved sensitivity chart -> {out}")
+    n_paths = next((int(a.split("=")[1]) for a in argv if a.startswith("--n=")), P.N_PATHS)
+    bn = 1e9
+    base, levers = compute(n_paths=n_paths)
+    print(f"Static NPV sensitivity ({n_paths:,} paths). Base case £{base / bn:+.3f}bn\n")
+    print(f"  {'lever':<32}{'low NPV':>10}{'high NPV':>10}{'swing':>9}   break-even")
+    for lv in reversed(levers):  # widest swing first
+        be = "none in range" if lv.breakeven is None else f"{lv.breakeven:,.2f}"
+        print(f"  {lv.label:<32}{lv.npv_low / bn:>+9.2f} {lv.npv_high / bn:>+9.2f} "
+              f"{lv.swing / bn:>8.2f}   {be}")
 
 
 if __name__ == "__main__":

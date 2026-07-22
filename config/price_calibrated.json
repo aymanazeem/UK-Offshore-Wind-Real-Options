@@ -1,88 +1,35 @@
 {
   "metadata": {
-    "model": "single-factor Ornstein-Uhlenbeck on deseasonalised log-price",
-    "method": "OLS AR(1) on deseasonalised log-price (exact MLE for OU)",
-    "calibrated_on": "data/processed/gb_price_daily.csv",
-    "data_window": {
-      "start": "2024-01-01",
-      "end": "2026-06-30",
-      "n_obs": 912
-    },
-    "generated_by": "src/price_simulator.py:write_calibration_json",
-    "calibration_since": "2024-01-01",
-    "note": "The price CSV spans 2018-2026, but the base case is fit from 2024-01-01 only. The 2021-23 gas crisis is a once-in-a-generation shock, deliberately excluded from the base so it can't dominate a 35-yr forward sim. It is kept in the data for a separate robustness calibration, call with since=None."
-  },
-  "seasonal": {
-    "form": "intercept + annual + semiannual harmonics",
-    "design": [
-      "1",
-      "sin(2pi tau)",
-      "cos(2pi tau)",
-      "sin(4pi tau)",
-      "cos(4pi tau)"
+    "model": "two-factor: seasonal + mean-reverting short term + random-walk long term",
+    "history_window": [
+      "2024-01-01",
+      "2026-06-30"
     ],
-    "tau_definition": "day_of_year / days_in_year",
-    "coefficients": [
-      4.356477766640555,
-      0.01778889758060414,
-      0.08157222092707504,
-      -0.02926673986299087,
-      0.053298890163388374
-    ]
+    "n_daily_obs": 912,
+    "note": "Short-term factor fitted to this window. Long-term volatility is a forward-looking assumption (config.PRICE_LT_VOL), reported as a sensitivity."
   },
-  "base_post_crisis": {
-    "recommended_frequency": "monthly",
-    "recommended_reason": "Fitting to daily or weekly prices makes the model snap back to its average too quickly, which wrongly narrows the year-to-year range. Monthly prices give a realistic range that matches what has been seen historically.",
-    "daily": {
-      "kappa": 227.40393455416714,
-      "mu": 0.001830874725243725,
-      "sigma": 6.839130801750774,
-      "ar1_a": 0.0008485213636147232,
-      "ar1_b": 0.5365486497161795,
-      "resid_sd": 0.2706214136492409,
-      "dt": 0.0027378507871321013,
-      "n_obs": 911,
-      "half_life_years": 0.003048087896627132,
-      "stationary_sd": 0.3206911128967305,
-      "steps_per_year": 365,
-      "X_last": 0.318660542711398
-    },
-    "weekly": {
-      "kappa": 30.869120662731948,
-      "mu": 0.034662736224203766,
-      "sigma": 1.631732250386581,
-      "ar1_a": 0.015479056527558089,
-      "ar1_b": 0.5534381236542542,
-      "resid_sd": 0.17296553391546451,
-      "dt": 0.019164955509924708,
-      "n_obs": 129,
-      "half_life_years": 0.022454386962722152,
-      "stationary_sd": 0.2076690471495802,
-      "steps_per_year": 52,
-      "X_last": 0.47016486274005054
-    },
-    "monthly": {
-      "kappa": 5.875957436644982,
-      "mu": 0.06415959783590369,
-      "sigma": 0.5785028327307593,
-      "ar1_a": 0.02484049116060116,
-      "ar1_b": 0.6128328107022449,
-      "resid_sd": 0.13335064456022216,
-      "dt": 0.08333333333333333,
-      "n_obs": 29,
-      "half_life_years": 0.11796327458690957,
-      "stationary_sd": 0.16875287146186407,
-      "steps_per_year": 12,
-      "X_last": 0.27781653173147536
-    }
+  "seasonal_coefficients": [
+    4.356477766640555,
+    0.01778889758060414,
+    0.08157222092707504,
+    -0.02926673986299087,
+    0.053298890163388374
+  ],
+  "short_term": {
+    "kappa": 7.572539107833675,
+    "sigma": 0.6707232527735182,
+    "level": 0.023086610607880597,
+    "x_last": 0.24316338079918326,
+    "half_life_days": 33.41002499975956,
+    "n_months": 30
   },
-  "simulation": {
-    "start_date": "2026-07-01"
+  "long_term": {
+    "sigma_per_year": 0.06,
+    "drift_per_year": 0.0
   },
-  "historical_reference": {
+  "sim_start_date": "2026-07-01",
+  "history": {
     "mean_price": 82.03747006184628,
-    "min_price": 10.586028288289278,
-    "max_price": 315.1646703191486,
     "annual_means": {
       "2024": 74.52236085967627,
       "2025": 82.66543085565868,

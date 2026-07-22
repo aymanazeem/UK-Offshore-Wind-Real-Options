@@ -6,7 +6,7 @@ PIP := ./venv/bin/pip
 # path count; override e.g. `make charts N=10000`
 N ?= 50000
 
-.PHONY: help install test charts charts-final price generation npv sensitivity defer expand abandon clean
+.PHONY: help install test charts charts-final price generation npv lcoe sensitivity defer expand abandon clean
 
 help:
 	@echo "Targets:"
@@ -14,7 +14,7 @@ help:
 	@echo "  test          run the pytest suite"
 	@echo "  charts        regenerate all charts (N=$(N) paths; override with N=...)"
 	@echo "  charts-final  regenerate all charts at production quality (N_PATHS_FINAL)"
-	@echo "  price generation npv sensitivity defer expand abandon   single modules"
+	@echo "  price generation npv lcoe sensitivity defer expand abandon   single modules"
 	@echo "  clean         remove __pycache__"
 
 install:
@@ -37,6 +37,9 @@ generation:
 
 npv:
 	$(PY) -m src.financial_model --n=$(N)
+
+lcoe:
+	$(PY) -m src.lcoe
 
 sensitivity:
 	$(PY) -m src.sensitivity --n=$(N)
