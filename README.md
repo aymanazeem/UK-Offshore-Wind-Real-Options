@@ -194,7 +194,40 @@ Each part also runs on its own.
 
 ## Project structure
 
-Each file has one job, and the calculation is kept separate from the charts, so every module reads as plain maths.
+Each file has one job, and the calculation is kept separate from the charts, so every module reads as plain maths. The flow of data through the project is below. Solid arrows carry data, dotted arrows carry the input numbers from the config file.
+
+```mermaid
+flowchart TD
+    elexon(["Elexon price download"])
+    ninja(["cf_annual.csv, renewables.ninja"])
+    params["config/parameters.py, every input"]
+
+    elexon --> prep["data_prep.py"]
+    prep -->|"clean daily prices"| daily[("gb_price_daily.csv")]
+
+    daily --> cal["price_simulator.py, calibrate"]
+    cal -->|"fitted price process"| caljson[("price_calibrated.json")]
+    caljson --> simp["price_simulator.py, simulate_price_paths"]
+
+    ninja --> gen["generation_model.py"]
+
+    simp -->|"price paths"| fin["financial_model.py, cash flows to NPV"]
+    gen -->|"generation"| fin
+
+    fin -->|"NPV"| viz["visualisation.py"]
+    fin --> lsm["lsm_engine.py, defer, expand, abandon"]
+    fin --> sens["sensitivity.py"]
+    fin --> lcoe["lcoe.py"]
+
+    lsm --> viz
+    sens --> viz
+    lcoe --> viz
+    viz -->|"7 charts"| charts(["outputs/charts/"])
+
+    params -.-> simp
+    params -.-> gen
+    params -.-> fin
+```
 
 | File | Job |
 |---|---|
