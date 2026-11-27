@@ -18,5 +18,6 @@ def defer_sim():
 
 @pytest.fixture(scope="session")
 def base_sim():
-    """(price, generation) over the operating life, base-case seeds."""
+    """(price over the build and operating years, generation over the operating years),
+    base-case seeds."""
     return lsm.simulate(n_paths=N_FAST, seed=42)

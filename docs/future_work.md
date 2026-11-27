@@ -1,13 +1,13 @@
 # Future work
 
 Proposals, not commitments. Ordered by leverage on the central finding: a static NPV of about
-−£1.08bn with the defer and expand options near £0.
+−£1.19bn with the defer and expand options near £0.
 
 ## Done (were the biggest issues in the earlier version)
 
 - **Two-factor price model.** The price is now season + a fast mean-reverting short-term factor +
   a slow random-walk long-term level (`price_simulator.py`). The long-term factor makes the fan
-  widen with the horizon (P90/P10 ~1.3 at year 1 → ~2.6 at year 35), so the muted timing options
+  widen with the horizon (P90/P10 ~1.2 at year 1 → ~2.7 at year 40), so the muted timing options
   are now a genuine economic result, not an artifact of a flat fan.
 - **Capital allowances in the base case.** The base case uses the 18% writing-down allowance (the
   realistic UK tax shield), not conservative straight-line.

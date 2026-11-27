@@ -1,6 +1,7 @@
 """
 All model inputs in one place. Every number here is backed by a public source and used
-somewhere in the model. Money is in real 2023/24 pounds throughout, so there is no inflation.
+somewhere in the model. Money is in real 2024 pounds throughout, so there is no inflation;
+figures published in another year's prices are restated with the consumer price index.
 
 Where a source gives a range we keep the low / central / high figures; the central one is the
 default and the low/high feed the sensitivity analysis. A few real-options inputs are not pinned
@@ -22,10 +23,20 @@ DATA_PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 CHARTS_DIR = PROJECT_ROOT / "outputs" / "charts"
 
 PRICE_DAILY_CSV = DATA_PROCESSED_DIR / "gb_price_daily.csv"
+CPI_CSV = DATA_PROCESSED_DIR / "cpi_index.csv"
 CF_ANNUAL_CSV = DATA_PROCESSED_DIR / "cf_annual.csv"
 CF_BENCHMARKS_CSV = DATA_PROCESSED_DIR / "capacity_factor_benchmarks.csv"
 COST_BENCHMARKS_CSV = DATA_PROCESSED_DIR / "cost_benchmarks.csv"
 PRICE_CALIBRATION_JSON = CONFIG_DIR / "price_calibrated.json"
+
+# --------------------------------------------------------------------------------------------
+# Price base: all money is in real pounds of PRICE_BASE_YEAR
+# --------------------------------------------------------------------------------------------
+# Figures published in another year's prices are restated with the ONS consumer price index (CPI,
+# series D7BT, 2015 = 100, in cpi_index.csv). These are its published annual averages; data_prep
+# restates the wholesale prices month by month against the base-year average.
+PRICE_BASE_YEAR = 2024
+CPI_ANNUAL_AVERAGE = {2012: 96.1, 2023: 130.5, 2024: 133.9}
 
 # --------------------------------------------------------------------------------------------
 # The wind farm (Arup for DESNZ Offshore Wind LCOE 2024, unless noted)
@@ -37,15 +48,29 @@ CONSTRUCTION_YEARS = 5          # years of construction before first power; CAPE
 HOURS_PER_YEAR = 8760.0
 DEGRADATION_RATE = 0.005        # output falls ~0.5%/yr with age (industry placeholder)
 
-# CAPEX and OPEX, real 2023/24 GBP, from Arup for DESNZ Table 3.
-CAPEX_PER_KW = {"low": 3321.0, "central": 3976.0, "high": 4439.0}   # £/kW, total installed cost
-OPEX_PER_MW_YEAR_K = {"low": 73.7, "central": 138.5, "high": 207.2}  # k£/MW/yr, total running cost
-# OPEX split out so the sensitivity can flex the big, location-specific grid charge (TNUoS)
-# separately from the rest. The three add up to OPEX_PER_MW_YEAR_K.
-OPEX_OM_INSURANCE_K = {"low": 38.5, "central": 55.1, "high": 74.3}   # O&M + insurance, k£/MW/yr
-OPEX_TNUOS_K = {"low": 35.3, "central": 83.4, "high": 132.9}        # grid connection charge, k£/MW/yr
+# CAPEX and OPEX from Arup for DESNZ Table 3, which publishes them in 2023 prices; the figures
+# below are Arup's, restated in PRICE_BASE_YEAR prices by ARUP_TO_BASE_YEAR. Arup's report builds
+# them up with the GDP deflator (up 3.8% from 2023 to 2024, against 2.6% for CPI); CPI keeps them
+# in the same unit as the CfD and the wholesale prices.
+ARUP_PRICE_YEAR = 2023
+ARUP_TO_BASE_YEAR = CPI_ANNUAL_AVERAGE[PRICE_BASE_YEAR] / CPI_ANNUAL_AVERAGE[ARUP_PRICE_YEAR]
 
-DECOMMISSIONING_PER_MW = 300_000.0  # £/MW, paid in the final year (DNV / Crown Estate range)
+
+def _restate_arup(published: dict) -> dict:
+    return {case: value * ARUP_TO_BASE_YEAR for case, value in published.items()}
+
+
+CAPEX_PER_KW = _restate_arup({"low": 3321.0, "central": 3976.0, "high": 4439.0})   # £/kW, installed
+OPEX_PER_MW_YEAR_K = _restate_arup({"low": 73.7, "central": 138.5, "high": 207.2})  # k£/MW/yr, total
+# OPEX split out so the sensitivity can flex the big, location-specific grid charge (TNUoS)
+# separately from the rest. The two add up to OPEX_PER_MW_YEAR_K.
+OPEX_OM_INSURANCE_K = _restate_arup({"low": 38.5, "central": 55.1, "high": 74.3})  # O&M + insurance
+OPEX_TNUOS_K = _restate_arup({"low": 35.3, "central": 83.4, "high": 132.9})        # grid charge
+
+# £/MW, paid in the final year: a central gross figure within the DNV and Crown Estate ranges,
+# whose price year is not stated, so it is used as it stands. Arup's survey average is lower,
+# £86k/MW in 2023 prices, net of scrap sales.
+DECOMMISSIONING_PER_MW = 300_000.0
 
 # --------------------------------------------------------------------------------------------
 # Money and tax
@@ -64,23 +89,29 @@ WDA_RATE = 0.18
 # --------------------------------------------------------------------------------------------
 # Generation: capacity factor (how much of the nameplate the wind actually delivers)
 # --------------------------------------------------------------------------------------------
-# Net load factor for a modern farm (net of wake and availability losses), DESNZ/IRENA central.
-CF_MEAN = 0.50
-CF_RANGE = {"low": 0.46, "central": 0.50, "high": 0.56}   # DESNZ low / central / high
+# Net load factor for a modern farm (net of wake and availability losses), Arup for DESNZ Table 3,
+# the same source as the costs and the LCOE benchmark.
+CF_MEAN = 0.505
+CF_RANGE = {"low": 0.460, "central": CF_MEAN, "high": 0.561}
 # Year-to-year variability. Measured from cf_annual.csv, a 20-year renewables.ninja series for one
-# turbine in the Dogger Bank grid cell (MERRA-2 weather, 2000-2019); this fallback is used only if
-# that file is missing.
-CF_SD_FALLBACK = 0.045
+# turbine in the Dogger Bank grid cell (MERRA-2 weather, 2000-2019). If that file is missing, the
+# fallback is the UK fleet's measured variability, about 4% of the mean (Potisomporn & Vogel 2022).
+CF_SD_FALLBACK = 0.04 * CF_MEAN
 
 # --------------------------------------------------------------------------------------------
 # Revenue: the CfD contract then the merchant market
 # --------------------------------------------------------------------------------------------
 # Years 1-20 are paid a fixed Contract-for-Difference strike price; the remaining years sell at
-# the wholesale market price. DESNZ CfD AR7 results, Jan 2026.
-CFD_STRIKE = 90.91              # £/MWh (2024 basis)
+# the wholesale market price. DESNZ CfD AR7 results, Jan 2026, in 2024 prices.
+CFD_STRIKE = 90.91              # £/MWh, the AR7 fixed-offshore average across its regions
 CFD_TERM_YEARS = 20
-CFD_ADMIN_CAP = 113.0           # £/MWh, the AR7 administrative strike cap (used as the high case)
-CFD_STRIKE_RANGE = {"low": 68.82, "central": CFD_STRIKE, "high": CFD_ADMIN_CAP}
+CFD_ADMIN_CAP = 113.0           # £/MWh, the AR7 administrative strike cap (the high case)
+# The low case is the previous round's price: AR6 (Sep 2024) awarded new fixed offshore wind
+# £58.87/MWh in 2012 prices, restated with CPI (DESNZ's own 2024-to-2012 factor, 0.7177, is the
+# same ratio). AR6 contracts ran 15 years, not 20, and a longer contract would clear lower, so this
+# is a cautious low end.
+CFD_AR6_STRIKE = 58.87 * CPI_ANNUAL_AVERAGE[PRICE_BASE_YEAR] / CPI_ANNUAL_AVERAGE[2012]
+CFD_STRIKE_RANGE = {"low": CFD_AR6_STRIKE, "central": CFD_STRIKE, "high": CFD_ADMIN_CAP}
 
 # Capture factor: in merchant years, wind sells for less than the time-average price, because it
 # generates when every other wind farm does and that depresses the price ("cannibalisation").
@@ -123,7 +154,7 @@ PRICE_RAW_CSV = DATA_RAW_DIR / f"elexon_market_index_{PRICE_DOWNLOAD_START}_{PRI
 
 # We fit the short-term (fast-reverting) part of the price to recent history, from this date on.
 # Starting in 2024 deliberately excludes the 2021-23 gas-crisis spike, a once-in-a-generation
-# shock that would otherwise dominate a 35-year forward simulation.
+# shock that would otherwise dominate a 40-year forward simulation.
 PRICE_HISTORY_START = "2024-01-01"
 SIM_START_DATE = "2026-07-01"           # first simulated month (day after the last price observation)
 

@@ -1,6 +1,7 @@
 """
-Downloads the raw GB wholesale price history from Elexon, which runs the electricity market's
-settlement.
+Downloads the public price data the model starts from: the GB wholesale price history from
+Elexon, which runs the electricity market's settlement, and the UK consumer price index from the
+Office for National Statistics (ONS), used to restate those prices in 2024 pounds.
 
 Elexon's Market Index Data (MID) gives, for every half-hour settlement period, the price and traded
 volume reported by each index provider. It is free to use and needs no account or key. One request
@@ -15,7 +16,9 @@ from __future__ import annotations
 
 import csv
 import http.client
+import io
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -29,6 +32,8 @@ API = "https://data.elexon.co.uk/bmrs/api/v1/datasets/MID"
 WINDOW = timedelta(days=7)          # the longest span the API accepts in one request
 PERIOD = timedelta(minutes=30)
 COLUMNS = ["settlement_date", "settlement_period", "start_time", "data_provider", "price", "volume"]
+CPI_URL = ("https://www.ons.gov.uk/generator?format=csv"
+           "&uri=/economy/inflationandpriceindices/timeseries/d7bt/mm23")
 
 
 def _fetch(first: datetime, last: datetime, retries: int = 3) -> list[dict]:
@@ -85,6 +90,24 @@ def download(start: str = P.PRICE_DOWNLOAD_START, end: str = P.PRICE_DOWNLOAD_EN
     return out
 
 
+def download_cpi(out: Path = P.CPI_CSV) -> Path:
+    """The monthly ONS consumer price index (series D7BT, 2015 = 100). Picking out the monthly
+    rows is the only cleaning it needs, so it goes straight to data/processed/."""
+    request = urllib.request.Request(CPI_URL, headers={"User-Agent": "UK-Offshore-Wind-Real-Options"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        rows = csv.reader(io.StringIO(response.read().decode("utf-8-sig")))
+        monthly = [(datetime.strptime(row[0].title(), "%Y %b").strftime("%Y-%m"), row[1])
+                   for row in rows if len(row) == 2 and re.fullmatch(r"\d{4} [A-Z]{3}", row[0])]
+    if not monthly:
+        raise ValueError(f"no monthly rows in the ONS download, so {out.name} was left as it was; "
+                         "the ONS format may have changed")
+    with out.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["month", "cpi_index"])
+        writer.writerows(monthly)
+    return out
+
+
 def main(argv=None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     start = next((a.split("=")[1] for a in argv if a.startswith("--start=")), P.PRICE_DOWNLOAD_START)
@@ -97,6 +120,11 @@ def main(argv=None) -> None:
         n_rows = sum(1 for _ in f) - 1
     print(f"Wrote {n_rows:,} half-hourly rows to {out.relative_to(P.PROJECT_ROOT)} "
           f"in {time.time() - t0:.0f}s")
+    cpi = download_cpi()
+    with cpi.open() as f:
+        months = list(csv.reader(f))[1:]
+    print(f"Wrote {len(months):,} months of ONS CPI, {months[0][0]} to {months[-1][0]}, "
+          f"to {cpi.relative_to(P.PROJECT_ROOT)}")
 
 
 if __name__ == "__main__":

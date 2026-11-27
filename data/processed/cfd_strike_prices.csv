@@ -1,9 +1,9 @@
 allocation_round,year_announced,technology,strike_price_gbp_per_mwh,price_basis,contract_years,admin_strike_cap_gbp_per_mwh,capacity_awarded_gw,notes,source
 AR7,2026,offshore_wind_fixed,90.91,2024,20,113,8.4,"Record volume; strike ABOVE 2025 wholesale ~£80","DESNZ CfD AR7 Results Jan 2026"
-AR7,2026,offshore_wind_floating,155.37,2024,20,271,0.1,"Erebus demonstration project","DESNZ CfD AR7 Results Jan 2026"
+AR7,2026,offshore_wind_floating,216.49,2024,20,271,0.19,"Erebus and Pentland; £155.37 in 2012 prices","DESNZ CfD AR7 Results Jan 2026"
 AR7,2026,onshore_wind,72,2024,20,,1.3,"+2% vs AR6","DESNZ CfD AR7 Results Feb 2026"
 AR7,2026,solar_pv,65,2024,20,,4.9,"-6.5% vs AR6","DESNZ CfD AR7 Results Feb 2026"
-AR6,2024,offshore_wind_fixed,,,15,,,"Recovery round after AR5 failure","Energy UK / DESNZ"
-AR5,2023,offshore_wind_fixed,,,15,44,0.0,"ZERO offshore wind awarded - cap too low (real-options deferral in action)","DESNZ / Energy UK"
+AR6,2024,offshore_wind_fixed,58.87,2012,15,73,3.36,"New projects Hornsea 4 and East Anglia 2; £82.03 in 2024 prices using DESNZ's 2024-to-2012 CPI factor 0.7177","DESNZ CfD AR6 Results Sep 2024"
+AR5,2023,offshore_wind_fixed,,2012,15,44,0.0,"ZERO offshore wind awarded - cap too low (real-options deferral in action)","DESNZ / Energy UK"
 AR7_project_BerwickBank,2026,offshore_wind_fixed,89.49,2024,20,,1.38,"Scotland, 4.1GW project","Energy Voice Feb 2026"
 AR7_project_AwelyMor,2026,offshore_wind_fixed,91.20,2024,20,,0.775,"Wales, first OSW CfD in a decade","Energy Voice Feb 2026"

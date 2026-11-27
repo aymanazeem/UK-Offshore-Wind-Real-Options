@@ -10,6 +10,8 @@ Conventions, kept deliberately simple:
   - Real 2024 money throughout, so the discount rate is a real rate and there is no inflation.
   - t = 0 is the start of construction. CAPEX is spread evenly over the build. Cash flows are
     discounted mid-year. Decommissioning is a single outflow in the final year.
+  - Price paths count years from today, so the first operating year earns the price of the year
+    after the build finishes, not today's.
   - Tax = 25% of (EBITDA - capital allowance). The allowance is the CAPEX written down at 18%/yr
     (UK reducing balance), which front-loads the tax shield. Tax can go negative in early years;
     we assume the loss is used immediately against group profit (standard for a large developer).
@@ -67,6 +69,16 @@ class ValuationResult:
                 "p90": float(p90), "prob_negative": float((self.npv < 0).mean())}
 
 
+def operating_prices(price: np.ndarray, life: int, decision_year: int = 0) -> np.ndarray:
+    """The price columns a farm committed at `decision_year` earns over its operating life: it
+    builds for CONSTRUCTION_YEARS, so operating year j sells in year decision_year + build + j."""
+    first = decision_year + P.CONSTRUCTION_YEARS
+    if decision_year < 0 or first + life > price.shape[1]:
+        raise ValueError(f"need {first + life} price columns for decision_year={decision_year}, "
+                         f"got {price.shape[1]}")
+    return price[:, first:first + life]
+
+
 def operating_cashflows(
     price: np.ndarray, gen: np.ndarray, capacity_mw: float = P.CAPACITY_MW, *,
     capex_per_kw: float = P.CAPEX_PER_KW["central"],
@@ -97,15 +109,11 @@ def value_from_decision_year(
     capture_factor: float = P.MERCHANT_CAPTURE_FACTOR,
 ) -> ValuationResult:
     """NPV of committing at `decision_year`: start building then, discounted back to that date.
-    This is the value the real-options engine sees at each "wait or commit" node. Operating year j
-    reads price column decision_year + j. decision_year = 0 is committing today."""
+    This is the value the real-options engine sees at each "wait or commit" node. decision_year = 0
+    is committing today."""
     life = gen.shape[1]
-    d = decision_year
-    if d < 0 or d + life > price.shape[1]:
-        raise ValueError(f"need {d + life} price columns for decision_year={d}, got {price.shape[1]}")
-
     op_cf, cfd_mask = operating_cashflows(
-        price[:, d:d + life], gen, capacity_mw, capex_per_kw=capex_per_kw,
+        operating_prices(price, life, decision_year), gen, capacity_mw, capex_per_kw=capex_per_kw,
         opex_per_mw_year_k=opex_per_mw_year_k, cfd_strike=cfd_strike,
         cfd_term_years=cfd_term_years, capture_factor=capture_factor)
 
@@ -126,9 +134,11 @@ def value_from_decision_year(
 
 def value_paths(price: np.ndarray, gen: np.ndarray, capacity_mw: float = P.CAPACITY_MW,
                 **kwargs) -> ValuationResult:
-    """NPV of committing today (decision_year = 0). price and gen must be the same shape."""
-    if price.shape != gen.shape:
-        raise ValueError(f"price {price.shape} and gen {gen.shape} must match")
+    """NPV of committing today (decision_year = 0). price covers the build and operating years,
+    CONSTRUCTION_YEARS more columns than gen, which covers the operating years only."""
+    if price.shape != (gen.shape[0], P.CONSTRUCTION_YEARS + gen.shape[1]):
+        raise ValueError(f"price {price.shape} must have {P.CONSTRUCTION_YEARS} more columns "
+                         f"than gen {gen.shape}")
     return value_from_decision_year(price, gen, 0, capacity_mw, **kwargs)
 
 
@@ -148,8 +158,9 @@ def value_of_remaining_operations(
 ) -> np.ndarray:
     """PV of the operating cash flows still to come from `from_year` (plus terminal decom),
     discounted to the start of that year. Valuing this at a buyer's lower WACC gives their price."""
-    op_cf, _ = operating_cashflows(price[:, :gen.shape[1]], gen, capacity_mw, cfd_strike=cfd_strike,
-                                   cfd_term_years=cfd_term_years, capture_factor=capture_factor)
+    op_cf, _ = operating_cashflows(operating_prices(price, gen.shape[1]), gen, capacity_mw,
+                                   cfd_strike=cfd_strike, cfd_term_years=cfd_term_years,
+                                   capture_factor=capture_factor)
     return _pv_remaining(op_cf, from_year, capacity_mw, wacc)
 
 
@@ -165,8 +176,9 @@ def divestment_advantage(
     WACC makes the same future cash flows worth more. The operating cash flow does not depend on
     the discount rate, so it is computed once and reused for every year and both WACCs."""
     life = gen.shape[1]
-    op_cf, _ = operating_cashflows(price[:, :life], gen, capacity_mw, cfd_strike=cfd_strike,
-                                   cfd_term_years=cfd_term_years, capture_factor=capture_factor)
+    op_cf, _ = operating_cashflows(operating_prices(price, life), gen, capacity_mw,
+                                   cfd_strike=cfd_strike, cfd_term_years=cfd_term_years,
+                                   capture_factor=capture_factor)
     advantage = np.empty((price.shape[0], life))
     for t in range(life):
         v_buyer = _pv_remaining(op_cf, t, capacity_mw, buyer_wacc)
@@ -178,7 +190,7 @@ def divestment_advantage(
 def run(n_paths: int = P.N_PATHS, seed: int = P.RANDOM_SEED) -> tuple[ValuationResult, object, object]:
     """Simulate prices and generation (on independent seeds) and value every path."""
     life = P.OPERATING_LIFE_YEARS
-    pp = simulate_price_paths(n_paths=n_paths, horizon=life, seed=seed)
+    pp = simulate_price_paths(n_paths=n_paths, horizon=P.CONSTRUCTION_YEARS + life, seed=seed)
     gp = simulate_generation(n_paths=n_paths, horizon=life, seed=seed + 1)
     n = min(pp.annual_prices.shape[0], gp.generation_mwh.shape[0])
     res = value_paths(pp.annual_prices[:n], gp.generation_mwh[:n])
