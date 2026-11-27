@@ -5,8 +5,6 @@ The raw feed carries two index providers, APXMIDP and N2EXMIDP. Over this period
 zero price and volume for almost all half-hours, so it must be excluded. Averaging it in would
 dilute the daily price toward half its true level. The Market Index Price is volume-weighted, so
 we volume-weight the surviving APX half-hourly prices within each day.
-
-This uses numpy aggregation only. pandas .resample() and .groupby().apply() segfault in this env.
 """
 
 from __future__ import annotations
