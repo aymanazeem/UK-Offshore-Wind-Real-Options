@@ -174,8 +174,10 @@ Four things are weaker than the rest, and I flag them.
 
 ## Running it
 
+You need Python 3.12, 3.13 or 3.14, and the automatic checks on GitHub use 3.13. If `python3` on your machine is another version, name one of these, for example `make install PYTHON=python3.13`.
+
 ```bash
-make install      # install the pinned dependencies into ./venv
+make install      # create ./venv if needed, then install the pinned dependencies
 make test         # run the test suite
 make charts       # regenerate every chart at 50,000 paths
 make lcoe         # print the levelised cost reconciliation

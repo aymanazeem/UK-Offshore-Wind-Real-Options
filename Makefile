@@ -1,6 +1,8 @@
 # Offshore-wind real-options model, common tasks.
 # Uses the project venv; create it with `make install` if it does not exist.
 
+# interpreter used to create the venv
+PYTHON ?= python3
 PY := ./venv/bin/python
 PIP := ./venv/bin/pip
 # path count; override e.g. `make charts N=10000`
@@ -10,15 +12,20 @@ N ?= 50000
 
 help:
 	@echo "Targets:"
-	@echo "  install       install pinned deps into ./venv"
+	@echo "  install       create ./venv if missing and install the pinned deps (PYTHON=... picks Python 3.12-3.14)"
 	@echo "  test          run the pytest suite"
 	@echo "  charts        regenerate all charts (N=$(N) paths; override with N=...)"
 	@echo "  charts-final  regenerate all charts at production quality (N_PATHS_FINAL)"
 	@echo "  price generation npv lcoe sensitivity defer expand abandon   single modules"
 	@echo "  clean         remove __pycache__"
 
-install:
+install: $(PIP)
 	$(PIP) install -r requirements.txt
+
+# the pinned packages publish installers for Python 3.12 to 3.14 only
+$(PIP):
+	@$(PYTHON) -c 'import sys; v = sys.version_info[:2]; sys.exit("Python 3.12 to 3.14 is needed, found %s. Try: make install PYTHON=python3.13" % sys.version.split()[0]) if not (3, 12) <= v <= (3, 14) else None'
+	$(PYTHON) -m venv venv
 
 test:
 	$(PY) -m pytest -q

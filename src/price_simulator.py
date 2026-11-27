@@ -76,11 +76,8 @@ def _load_history(csv_path=P.PRICE_DAILY_CSV, since: str = P.PRICE_HISTORY_START
     """Daily prices from `since` onward, positive only (log needs P > 0), date-sorted."""
     df = (pd.read_csv(csv_path, parse_dates=["date"])
           .sort_values("date").reset_index(drop=True))
-    df = df[df["price_gbp_per_mwh"] > 0].reset_index(drop=True)
-    # A boolean datetime comparison can crash pandas 3.0 in this environment, so we find the cut
-    # position with searchsorted and slice by position instead.
-    pos = int(np.searchsorted(df["date"].to_numpy(), np.datetime64(since), side="left"))
-    return df.iloc[pos:].reset_index(drop=True)
+    keep = (df["price_gbp_per_mwh"] > 0) & (df["date"] >= pd.Timestamp(since))
+    return df[keep].reset_index(drop=True)
 
 
 def _monthly_deseasonalised(df: pd.DataFrame, seasonal_coef: np.ndarray) -> np.ndarray:
