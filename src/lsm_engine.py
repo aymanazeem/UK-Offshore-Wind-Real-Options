@@ -14,9 +14,10 @@ yearly decision node it compares "act now" against "wait and decide next year."
 The subtle part: acting now (say, committing to build) locks in a 35-year cash flow whose value
 depends on the *whole future price path*, which we cannot know at the decision node. Using each
 path's realised value would be cheating (looking into the future). So we estimate BOTH the
-act-now value and the wait value as functions of today's observable price, by regressing across
-all paths, and decide on those estimates, while banking the actual realised value where we act.
-This "look-ahead-free" comparison is the heart of Longstaff-Schwartz.
+act-now value and the wait value as functions of the price the owner has already seen (the
+average of the year just ended, see `known_prices`), by regressing across all paths, and decide
+on those estimates, while banking the actual realised value where we act. This "look-ahead-free"
+comparison is the heart of Longstaff-Schwartz.
 """
 
 from __future__ import annotations
@@ -29,8 +30,7 @@ import numpy as np
 from config import parameters as P
 from src.price_simulator import simulate_price_paths
 from src.generation_model import simulate_generation
-from src.financial_model import (value_from_decision_year, value_paths, divestment_advantage,
-                                 operating_prices)
+from src.financial_model import value_from_decision_year, value_paths, divestment_advantage
 
 LIFE = P.OPERATING_LIFE_YEARS
 
@@ -81,6 +81,16 @@ def _american_option(payoff: np.ndarray, price_state: np.ndarray, *, wacc: float
     return value, action
 
 
+def known_prices(price: np.ndarray, years) -> np.ndarray:
+    """The price the owner has seen when deciding at the start of each year in `years`: the
+    average of the year just ended. Before the first simulated year that is history, the same on
+    every path, so it carries no information about which path is unfolding."""
+    years = np.asarray(years)
+    seen = price[:, np.maximum(years - 1, 0)]
+    seen[:, years == 0] = 0.0
+    return seen
+
+
 def _mix(action: np.ndarray, nodes) -> dict:
     """Share of paths acting at each node, plus the share that never act. `action` and `nodes`
     both hold actual decision years (not indices), so they compare directly."""
@@ -120,7 +130,8 @@ def defer_option(price, gen, d_max=P.DEFERRAL_MAX_YEARS, *, can_walk_away=True, 
     if ex is None:
         ex = commit_npvs(price, gen, d_max, wacc=wacc)
     ex = ex[:, :d_max + 1]
-    value0, commit_year = _american_option(ex, price[:, :d_max + 1], wacc=wacc, degree=degree,
+    value0, commit_year = _american_option(ex, known_prices(price, np.arange(d_max + 1)),
+                                            wacc=wacc, degree=degree,
                                             must_act_by_end=not can_walk_away)
     years = np.arange(d_max + 1)
     commit_year = np.where(commit_year >= 0, years[np.where(commit_year >= 0, commit_year, 0)], -1)
@@ -165,8 +176,8 @@ def expand_option(price, gen2, *, wacc=P.WACC, degree=P.LSM_BASIS_DEGREE, decisi
         ex[:, k] = value_from_decision_year(price, gen2, int(d), P.PHASE2_CAPACITY_MW, wacc=wacc,
                                              capex_per_kw=capex_per_kw, cfd_strike=cfd_strike,
                                              cfd_term_years=cfd_term_years).npv
-    value, idx = _american_option(ex, price[:, decision_years], wacc=wacc, degree=degree,
-                                  must_act_by_end=False)
+    value, idx = _american_option(ex, known_prices(price, decision_years), wacc=wacc,
+                                  degree=degree, must_act_by_end=False)
     to_fid = (1.0 / (1.0 + wacc)) ** int(decision_years[0])   # first window year -> FID
     exercise_year = np.where(idx >= 0, decision_years[np.where(idx >= 0, idx, 0)], -1)
     return ExpandResult(option_value=float(value.mean()) * to_fid,
@@ -195,7 +206,8 @@ def abandon_option(price, gen, *, wacc=P.WACC, degree=P.LSM_BASIS_DEGREE, buyer_
     advantage = divestment_advantage(price, gen, our_wacc=wacc, buyer_wacc=buyer_wacc,
                                      transaction_cost=transaction_cost)
     static = value_paths(price[:, :P.CONSTRUCTION_YEARS + LIFE], gen, wacc=wacc).npv
-    add_on, idx = _american_option(advantage, operating_prices(price, LIFE), wacc=wacc,
+    selling_years = P.CONSTRUCTION_YEARS + np.arange(LIFE)  # each operating year, from today
+    add_on, idx = _american_option(advantage, known_prices(price, selling_years), wacc=wacc,
                                    degree=degree, must_act_by_end=False)
     to_fid = (1.0 / (1.0 + wacc)) ** P.CONSTRUCTION_YEARS   # operating year 0 -> FID
     sell_year = np.where(idx >= 0, idx, -1)                 # node index == operating year here

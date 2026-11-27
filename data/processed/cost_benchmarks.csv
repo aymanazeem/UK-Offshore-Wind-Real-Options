@@ -1,7 +1,7 @@
 parameter,category,unit,low,central,high,source,notes
 predevelopment,capex,GBP_per_kW,104,216,308,"Arup for DESNZ Offshore Wind LCOE 2024 (2025-07-24) Table 3",2023 real prices
 construction,capex,GBP_per_kW,2415,2823,3101,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",2023 real prices
-infrastructure,capex,GBP_per_kW,802,937,1030,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",excludes OFTO (in TNUoS)
+infrastructure,capex,GBP_per_kW,802,937,1030,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3","the OFTO transmission link; left out of Arup's LCOE and the model, as TNUoS pays for it"
 total_capex,capex,GBP_per_kW,3321,3976,4439,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",2023 real prices
 om,opex,kGBP_per_MW_year,30.5,46.5,64.6,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",operations and maintenance
 insurance,opex,kGBP_per_MW_year,8.0,8.6,9.7,"Arup for DESNZ Offshore Wind LCOE 2024 Table 3",

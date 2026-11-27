@@ -41,6 +41,10 @@ def _save(fig, name):
     return path
 
 
+def _bn(value_gbp_bn: float, digits: int = 2) -> str:
+    return f"{'+' if value_gbp_bn >= 0 else '−'}£{abs(value_gbp_bn):.{digits}f}bn"
+
+
 def _box(ax, text, xy=(0.97, 0.03), ha="right", va="bottom"):
     ax.text(*xy, text, transform=ax.transAxes, fontsize=8, ha=ha, va=va,
             bbox=dict(boxstyle="round,pad=0.4", fc="#fff7e6", ec="0.7", alpha=0.95))
@@ -84,7 +88,7 @@ def chart_generation(n_paths):
     fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 5.2))
 
     cf0 = gp.capacity_factor[:, 0]
-    axL.hist(cf0, bins=60, density=True, color=BLUE, alpha=0.35, label="Simulated CF (yr 1)")
+    axL.hist(cf0, bins=60, density=True, color=BLUE, alpha=0.35, label="Simulated CF, average year")
     grid = np.linspace(cf0.min() - 0.02, cf0.max() + 0.02, 400)
     axL.plot(grid, stats.beta.pdf(grid, gp.alpha, gp.beta), color=BLUE, lw=2,
              label=f"Beta({gp.alpha:.0f}, {gp.beta:.0f})")
@@ -98,7 +102,7 @@ def chart_generation(n_paths):
     axR.plot(gp.calendar_year, pct[50], color=GREEN, lw=2, label="P50")
     axR.set_xlabel("Year"); axR.set_ylabel("Annual generation (TWh)"); axR.set_ylim(0, None)
     axR.set_title(f"Generation over {twh.shape[1]} yr ({P.CAPACITY_MW:.0f} MW, "
-                  f"{P.DEGRADATION_RATE:.1%}/yr de-rating)")
+                  f"{P.DEGRADATION_RATE:.1%}/yr wear around the lifetime average)")
     axR.legend(fontsize=8); axR.grid(True, alpha=0.25)
     fig.suptitle("Chart (verification): capacity factor and generation", fontsize=12.5)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
@@ -111,10 +115,10 @@ def chart_npv(n_paths):
     fig, (axL, axR) = plt.subplots(1, 2, figsize=(13.5, 5.4))
 
     axL.hist(res.npv / BN, bins=70, color=BLUE, alpha=0.45)
-    for q, lab in [(s["p10"], "P10"), (s["p50"], "P50"), (s["p90"], "P90")]:
+    for q, lab, ha in [(s["p10"], "P10", "right"), (s["p50"], "P50", "right"), (s["p90"], "P90", "left")]:
         axL.axvline(q / BN, color=DARK, lw=1.4, ls="--")
-        axL.text(q / BN, axL.get_ylim()[1] * 0.96, f" {lab} £{q / BN:.2f}bn", rotation=90,
-                 fontsize=8, va="top")
+        axL.text(q / BN, axL.get_ylim()[1] * 0.96, f" {lab} {_bn(q / BN)} ", rotation=90,
+                 fontsize=8, va="top", ha=ha)
     axL.axvline(0, color=RED, lw=2)
     axL.set_xlabel("NPV (£bn, real 2024)"); axL.set_ylabel("Paths")
     axL.set_title(f"NPV distribution (P(NPV<0) = {s['prob_negative']:.0%})")
@@ -131,7 +135,7 @@ def chart_npv(n_paths):
     axR.axhline(0, color="0.3", lw=1)
     axR.set_xticks(range(len(pieces) + 1))
     axR.set_xticklabels([p[0] for p in pieces] + ["= NPV"], fontsize=8)
-    axR.set_ylabel("£bn"); axR.set_title(f"Mean PV bridge → NPV £{s['mean'] / BN:+.2f}bn")
+    axR.set_ylabel("£bn"); axR.set_title(f"Mean PV bridge → NPV {_bn(s['mean'] / BN, 3)}")
     axR.grid(True, axis="y", alpha=0.25)
     fig.suptitle(f"Chart 2: Project NPV ({n_paths:,} paths, WACC {P.WACC:.1%})", fontsize=12.5)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -144,9 +148,11 @@ def chart_sensitivity(n_paths):
     for i, lv in enumerate(levers):
         lo, hi = lv.npv_low / BN, lv.npv_high / BN
         ax.barh(i, hi - lo, left=lo, color=BLUE, alpha=0.7, height=0.6)
-        be = "" if lv.breakeven is None else f"  break-even {lv.breakeven:,.2f}"
+        fmt = {"WACC": "{:.2%}", "Capacity factor": "{:.3f}", "Merchant capture": "{:.3f}"}
+        be = "" if lv.breakeven is None else \
+            "  break-even " + fmt.get(lv.label, "{:,.1f}").format(lv.breakeven)
         ax.text(max(hi, lo) + 0.02, i, be, va="center", fontsize=8, color="0.3")
-    ax.axvline(base / BN, color=RED, lw=2, label=f"base £{base / BN:+.2f}bn")
+    ax.axvline(base / BN, color=RED, lw=2, label=f"base {_bn(base / BN, 3)}")
     ax.set_yticks(range(len(levers))); ax.set_yticklabels([lv.label for lv in levers], fontsize=9)
     ax.set_xlabel("Static NPV (£bn, real 2024)"); ax.legend(loc="lower right", fontsize=9)
     ax.set_title(f"Chart 3: Static-NPV sensitivity ({n_paths:,} paths)")
@@ -167,15 +173,15 @@ def chart_defer(n_paths):
             (f"Defer ≤{full.d_max}y\n+ walk-away", full.option_value, GREEN)]
     for i, (lab, v, c) in enumerate(bars):
         axL.bar(i, v / BN, color=c, width=0.6, alpha=0.9)
-        axL.text(i, v / BN, f"£{v / BN:+.2f}bn", ha="center",
+        axL.text(i, v / BN, _bn(v / BN, 3), ha="center",
                  va="bottom" if v >= 0 else "top", fontsize=9.5, fontweight="bold")
     axL.axhline(0, color=RED, lw=2)
     axL.set_xticks(range(3)); axL.set_xticklabels([b[0] for b in bars], fontsize=8.5)
     axL.set_ylabel("Value (£bn)"); axL.set_title("Defer option vs commit now")
     axL.grid(True, axis="y", alpha=0.25)
     never = (full.commit_year == -1).mean()
-    _box(axL, f"Walk-away premium £{full.premium / BN:+.2f}bn\n= the right not to build\n"
-              f"({never:.0%} of paths never build)")
+    _box(axL, f"Premium over committing now {_bn(full.premium / BN, 3)}\n"
+              f"({never:.0%} of paths never build)", xy=(0.03, 0.97), ha="left", va="top")
 
     ds = np.arange(P.DEFERRAL_MAX_YEARS + 1)
     v_wa = [lsm.defer_option(price, gen, d, ex=ex).option_value / BN for d in ds]
@@ -202,27 +208,31 @@ def chart_expand(n_paths):
             ("Expand option\n(optimal timing)", merch.option_value, GREEN)]
     for i, (lab, v, c) in enumerate(bars):
         axL.bar(i, v / BN, color=c, width=0.5, alpha=0.9)
-        axL.text(i, v / BN, f"£{v / BN:+.2f}bn", ha="center",
+        axL.text(i, v / BN, _bn(v / BN), ha="center",
                  va="bottom" if v >= 0 else "top", fontsize=9.5, fontweight="bold")
     axL.axhline(0, color=RED, lw=2)
     axL.set_xticks(range(len(bars))); axL.set_xticklabels([b[0] for b in bars], fontsize=8.5)
     axL.set_ylabel("Value (£bn)"); axL.set_title("Phase-2 expand option (merchant)")
     axL.grid(True, axis="y", alpha=0.25)
-    be = lcoe.breakeven_price()
-    _box(axL, f"Merchant Phase 2 is out of the money\n(sim price ~£{price.mean():.0f} < "
-              f"break-even ~£{be:.0f}).\nOption value = the right not to expand.", va="top",
-         xy=(0.97, 0.97))
+    be = lcoe.pretax_lcoe(capacity_mw=P.PHASE2_CAPACITY_MW,
+                          per_kw=P.CAPEX_PER_KW["central"] * (1 - P.EXPAND_CAPEX_LEARNING))
+    captured = P.MERCHANT_CAPTURE_FACTOR * fm.operating_prices(
+        price, P.OPERATING_LIFE_YEARS, int(dys[0])).mean()   # over Phase 2's own operating years
+    _box(axL, f"Merchant Phase 2 captures ~£{captured:.0f}/MWh, "
+              f"below its ~£{be:.0f} break-even.\nIts value is the right to build only\n"
+              f"where prices rise far enough.", va="bottom", xy=(0.97, 0.03))
 
     # engine check: as a guaranteed full-life contract price rises past break-even, value climbs
     levels = np.arange(70, 156, 5, dtype=float)
     vals = [lsm.expand_option(price, gen2, decision_years=dys, cfd_strike=L,
                               cfd_term_years=P.OPERATING_LIFE_YEARS).option_value / BN for L in levels]
     axR.plot(levels, vals, color=GREEN, marker="o", ms=3, label="fixed-price Phase 2")
-    axR.axvline(price.mean(), color="0.4", ls="--", label=f"sim mean £{price.mean():.0f}")
+    axR.axvline(captured, color="0.4", ls="--", label=f"merchant capture £{captured:.0f}")
     axR.axvline(be, color=DARK, ls=":", label=f"break-even £{be:.0f}")
     axR.axhline(0, color=RED, lw=1.5)
     axR.set_xlabel("Phase-2 achieved price (£/MWh)"); axR.set_ylabel("Option value (£bn)")
-    axR.set_title("Engine check: value climbs once ITM"); axR.legend(fontsize=8)
+    axR.set_title("Engine check: value climbs once the price clears break-even")
+    axR.legend(fontsize=8)
     axR.grid(True, alpha=0.25)
     fig.suptitle(f"Chart 5: Expand option ({price.shape[0]:,} paths)", fontsize=12.5)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -238,17 +248,17 @@ def chart_abandon(n_paths):
     axL.bar(0, st, color=BLUE, width=0.6, alpha=0.9)
     axL.bar(1, add, bottom=st, color=GREEN, width=0.6, alpha=0.9)
     axL.bar(2, tot, color=DARK, width=0.6, alpha=0.9)
-    axL.text(0, st, f"£{st:+.2f}bn", ha="center", va="top", fontsize=9.5, fontweight="bold")
-    axL.text(1, tot, f"+£{add:.2f}bn", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
-    axL.text(2, tot, f"£{tot:+.2f}bn", ha="center", va="top", fontsize=9.5, fontweight="bold")
+    axL.text(0, max(st, 0), _bn(st, 3), ha="center", va="bottom", fontsize=9.5, fontweight="bold")
+    axL.text(1, tot, _bn(add), ha="center", va="bottom", fontsize=9.5, fontweight="bold")
+    axL.text(2, tot, _bn(tot), ha="center", va="bottom", fontsize=9.5, fontweight="bold")
     axL.axhline(0, color=RED, lw=2)
     axL.set_xticks(range(3)); axL.set_xticklabels(["Static\n(hold)", "Divest\nadd-on", "With\ndivest"],
                                                   fontsize=8.5)
-    axL.set_ylabel("NPV (£bn)"); axL.set_title("Divestment lifts NPV (still < 0)")
+    axL.set_ylabel("NPV (£bn)"); axL.set_title("Sale add-on (illustrative)")
+    axL.set_xlabel(f"Buyer's rate {base.buyer_wacc:.1%} vs our {P.WACC:.1%}, "
+                   f"{base.transaction_cost:.0%} sale cost. Both are illustrative, not sourced.",
+                   fontsize=8)
     axL.grid(True, axis="y", alpha=0.25)
-    _box(axL, f"WACC-gap sale: buyer {base.buyer_wacc:.1%} vs us {P.WACC:.1%},\n"
-              f"net {base.transaction_cost:.0%} cost. Inputs are PLACEHOLDERS.", va="top",
-         xy=(0.5, 0.97), ha="center")
 
     buyer_waccs = np.linspace(0.045, P.WACC, 7)
     for txn, c, ls in [(0.0, GREEN, "-"), (0.02, DARK, "--"), (0.05, RED, ":")]:

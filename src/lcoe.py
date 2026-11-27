@@ -7,12 +7,12 @@ in 2023 prices (cost_benchmarks.csv) from the same cost inputs this model uses; 
 it is restated in 2024 pounds. This module recomputes LCOE from the model's own DCF and explains
 the gap to that benchmark, so the economics are transparent:
 
-  1. pre-tax LCOE  = PV(all costs) / PV(all generation)  -- the standard, tax-free definition.
-  2. break-even price = the flat price that makes the model's *after-tax* NPV zero.
+  1. pre-tax LCOE  = PV(all costs) / PV(all generation), the standard tax-free definition. The
+     model's base case is also before tax, so a flat price equal to this LCOE gives an NPV of zero.
+  2. after-tax break-even = the flat price that makes the after-tax view's NPV zero.
 
-The difference between the two is the tax effect. The gap between (1) and the benchmark comes
-from differences in what is counted and when; docs/decisions.md sets them out. Seeing both makes
-it clear why the headline NPV is negative at a CfD of £90.91.
+The gap between (1) and the benchmark comes from differences in what is counted and when;
+docs/decisions.md sets them out.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from scipy.optimize import brentq
 
 from config import parameters as P
 from src.financial_model import discount_factors, operating_prices, total_capex, value_paths
+from src.generation_model import age_profile
 from src.price_simulator import simulate_price_paths
 
 LIFE = P.OPERATING_LIFE_YEARS
@@ -30,9 +31,8 @@ BENCHMARK_LCOE = 88.5 * P.ARUP_TO_BASE_YEAR
 
 
 def _lifetime_generation_mwh(capacity_mw=P.CAPACITY_MW, cf=P.CF_MEAN) -> np.ndarray:
-    """Deterministic annual generation at the mean capacity factor, with age de-rating."""
-    age = np.arange(LIFE)
-    return capacity_mw * cf * P.HOURS_PER_YEAR * (1.0 - P.DEGRADATION_RATE) ** age
+    """Deterministic annual generation at the mean capacity factor, shaped by the age profile."""
+    return capacity_mw * cf * P.HOURS_PER_YEAR * age_profile(LIFE)
 
 
 def pretax_lcoe(capacity_mw=P.CAPACITY_MW, cf=P.CF_MEAN, per_kw=P.CAPEX_PER_KW["central"],
@@ -50,33 +50,34 @@ def pretax_lcoe(capacity_mw=P.CAPACITY_MW, cf=P.CF_MEAN, per_kw=P.CAPEX_PER_KW["
     return (pv_capex + pv_opex + pv_decom) / pv_gen
 
 
-def breakeven_price(capacity_mw=P.CAPACITY_MW, cf=P.CF_MEAN, wacc=P.WACC) -> float:
-    """The flat, all-merchant real price (with capture=1) that makes the after-tax NPV zero."""
+def breakeven_price(capacity_mw=P.CAPACITY_MW, cf=P.CF_MEAN, wacc=P.WACC, tax_rate=0.0) -> float:
+    """The flat, all-merchant real price (with capture=1) that makes the NPV zero. Before tax it
+    equals the pre-tax LCOE; the after-tax view passes tax_rate and the post-tax WACC."""
     gen = _lifetime_generation_mwh(capacity_mw, cf)[None, :]  # one deterministic path
 
     def npv(price):
         prices = np.full((1, P.CONSTRUCTION_YEARS + LIFE), price)
         return value_paths(prices, gen, capacity_mw, wacc=wacc, cfd_term_years=0,
-                           capture_factor=1.0).npv[0]
+                           capture_factor=1.0, tax_rate=tax_rate).npv[0]
 
-    return float(brentq(npv, 40.0, 400.0))
+    return float(brentq(npv, 20.0, 400.0))
 
 
 def main() -> None:
     lcoe = pretax_lcoe()
-    be = breakeven_price()
+    after_tax = breakeven_price(wacc=P.POST_TAX_WACC, tax_rate=P.TAX_RATE)
     print("LCOE reconciliation (central inputs)")
     print(f"  published benchmark (Arup/DESNZ)   £{BENCHMARK_LCOE:.1f}/MWh   "
           f"(£88.5 in {P.ARUP_PRICE_YEAR} prices)")
     gap = lcoe - BENCHMARK_LCOE
     print(f"  model pre-tax LCOE                  £{lcoe:.1f}/MWh   "
           f"({'+' if gap >= 0 else '-'}£{abs(gap):.1f} vs benchmark; docs/decisions.md explains the gap)")
-    print(f"  model after-tax break-even price    £{be:.1f}/MWh   "
-          f"(+£{be - lcoe:.1f} vs pre-tax LCOE: tax effect)")
+    print(f"  after-tax break-even price          £{after_tax:.1f}/MWh   "
+          f"(after-tax view: {P.TAX_RATE:.0%} tax, discounted at {P.POST_TAX_WACC:.2%})")
     merchant = operating_prices(simulate_price_paths().annual_prices, LIFE)[:, P.CFD_TERM_YEARS:]
-    print(f"  CfD strike is £{P.CFD_STRIKE:.2f}/MWh; after the CfD the market price averages "
-          f"£{merchant.mean():.0f}, of which wind captures £{P.MERCHANT_CAPTURE_FACTOR * merchant.mean():.0f}. "
-          f"Both are below £{be:.0f}, so the project is NPV-negative.")
+    print(f"  CfD strike is £{P.CFD_STRIKE:.2f}/MWh for {P.CFD_TERM_YEARS} years; after the CfD the "
+          f"market price averages £{merchant.mean():.0f}, of which wind captures "
+          f"£{P.MERCHANT_CAPTURE_FACTOR * merchant.mean():.0f}.")
 
 
 if __name__ == "__main__":

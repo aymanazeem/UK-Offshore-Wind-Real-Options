@@ -12,9 +12,11 @@ Conventions, kept deliberately simple:
     discounted mid-year. Decommissioning is a single outflow in the final year.
   - Price paths count years from today, so the first operating year earns the price of the year
     after the build finishes, not today's.
-  - Tax = 25% of (EBITDA - capital allowance). The allowance is the CAPEX written down at 18%/yr
-    (UK reducing balance), which front-loads the tax shield. Tax can go negative in early years;
-    we assume the loss is used immediately against group profit (standard for a large developer).
+  - Cash flows are before tax, matching the pre-tax discount rate (see config.WACC). The after-tax
+    view passes tax_rate: tax is then that share of (EBITDA - capital allowance), the allowance
+    being the CAPEX written down at 18%/yr (UK reducing balance) on its nominal cost, so it loses
+    value to inflation. Tax can go negative in early years; we assume the loss is used
+    immediately against group profit, as a large developer can.
 """
 
 from __future__ import annotations
@@ -52,16 +54,24 @@ def capital_allowance(capex: float, life: int, rate: float = P.WDA_RATE) -> np.n
     return dep
 
 
+def real_capital_allowance(capex: float, life: int, inflation: float = P.INFLATION) -> np.ndarray:
+    """The writing-down allowance in real pounds. The pool is the CAPEX in the pounds of the year
+    it is spent, and each year's allowance is worth less by the time it is claimed."""
+    c = P.CONSTRUCTION_YEARS
+    nominal_pool = capex / c * ((1.0 + inflation) ** (np.arange(c) + 0.5)).sum()
+    return capital_allowance(nominal_pool, life) / (1.0 + inflation) ** (c + np.arange(life) + 0.5)
+
+
 @dataclass
 class ValuationResult:
     """Per-path NPV (£) and the present-value pieces that build it."""
     npv: np.ndarray                 # (n_paths,)
-    pv_operating: np.ndarray        # post-tax operating cash flow, all years
+    pv_operating: np.ndarray        # operating cash flow, all years
     pv_cfd: np.ndarray              # operating CF, CfD years only
     pv_merchant: np.ndarray         # operating CF, merchant years only
     pv_capex: float
     pv_decom: float
-    op_cf: np.ndarray               # (n_paths, life) post-tax operating CF per year, for the LSM
+    op_cf: np.ndarray               # (n_paths, life) operating CF per year, for the LSM
 
     def summary(self) -> dict:
         p10, p50, p90 = np.percentile(self.npv, [10, 50, 90])
@@ -84,9 +94,11 @@ def operating_cashflows(
     capex_per_kw: float = P.CAPEX_PER_KW["central"],
     opex_per_mw_year_k: float = P.OPEX_PER_MW_YEAR_K["central"],
     cfd_strike: float = P.CFD_STRIKE, cfd_term_years: int = P.CFD_TERM_YEARS,
-    capture_factor: float = P.MERCHANT_CAPTURE_FACTOR,
+    capture_factor: float = P.MERCHANT_CAPTURE_FACTOR, tax_rate: float = 0.0,
+    inflation: float = P.INFLATION,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Post-tax operating cash flow for each path and year. Returns (op_cf, cfd_mask).
+    """Operating cash flow for each path and year, before tax unless tax_rate is given. Returns
+    (op_cf, cfd_mask).
 
     Revenue is the fixed CfD strike in contract years, and the market price haircut by the capture
     factor in merchant years. Setting cfd_term_years=0 makes the asset fully merchant (used for the
@@ -96,8 +108,8 @@ def operating_cashflows(
     revenue = np.where(cfd_mask, cfd_strike * gen, capture_factor * price * gen)
     opex = opex_per_mw_year_k * 1e3 * capacity_mw
     ebitda = revenue - opex
-    allowance = capital_allowance(total_capex(capacity_mw, capex_per_kw), life)
-    op_cf = ebitda - P.TAX_RATE * (ebitda - allowance)  # allowance broadcasts across paths
+    allowance = real_capital_allowance(total_capex(capacity_mw, capex_per_kw), life, inflation)
+    op_cf = ebitda - tax_rate * (ebitda - allowance)  # allowance broadcasts across paths
     return op_cf, cfd_mask
 
 
@@ -106,7 +118,7 @@ def value_from_decision_year(
     *, wacc: float = P.WACC, capex_per_kw: float = P.CAPEX_PER_KW["central"],
     opex_per_mw_year_k: float = P.OPEX_PER_MW_YEAR_K["central"],
     cfd_strike: float = P.CFD_STRIKE, cfd_term_years: int = P.CFD_TERM_YEARS,
-    capture_factor: float = P.MERCHANT_CAPTURE_FACTOR,
+    capture_factor: float = P.MERCHANT_CAPTURE_FACTOR, tax_rate: float = 0.0,
 ) -> ValuationResult:
     """NPV of committing at `decision_year`: start building then, discounted back to that date.
     This is the value the real-options engine sees at each "wait or commit" node. decision_year = 0
@@ -115,7 +127,7 @@ def value_from_decision_year(
     op_cf, cfd_mask = operating_cashflows(
         operating_prices(price, life, decision_year), gen, capacity_mw, capex_per_kw=capex_per_kw,
         opex_per_mw_year_k=opex_per_mw_year_k, cfd_strike=cfd_strike,
-        cfd_term_years=cfd_term_years, capture_factor=capture_factor)
+        cfd_term_years=cfd_term_years, capture_factor=capture_factor, tax_rate=tax_rate)
 
     c = P.CONSTRUCTION_YEARS
     capex = total_capex(capacity_mw, capex_per_kw)
@@ -200,7 +212,7 @@ def run(n_paths: int = P.N_PATHS, seed: int = P.RANDOM_SEED) -> tuple[ValuationR
 def main(argv=None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     n_paths = next((int(a.split("=")[1]) for a in argv if a.startswith("--n=")), P.N_PATHS)
-    res, _, _ = run(n_paths=n_paths)
+    res, pp, gp = run(n_paths=n_paths)
     s = res.summary()
     bn = 1e9
     print(f"Static NPV ({n_paths:,} paths): mean £{s['mean'] / bn:+.3f}bn  "
@@ -209,6 +221,11 @@ def main(argv=None) -> None:
     print(f"  PV pieces (mean £bn): capex -{res.pv_capex / bn:.2f}, "
           f"CfD ops +{res.pv_cfd.mean() / bn:.2f}, merchant ops +{res.pv_merchant.mean() / bn:.2f}, "
           f"decom -{res.pv_decom / bn:.2f}")
+    n = res.npv.shape[0]
+    after = value_paths(pp.annual_prices[:n], gp.generation_mwh[:n], tax_rate=P.TAX_RATE,
+                        wacc=P.POST_TAX_WACC).summary()
+    print(f"  After-tax view ({P.TAX_RATE:.0%} tax, discounted at {P.POST_TAX_WACC:.2%}): "
+          f"mean £{after['mean'] / bn:+.3f}bn, P(NPV<0) {after['prob_negative']:.0%}")
 
 
 if __name__ == "__main__":

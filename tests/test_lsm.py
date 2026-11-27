@@ -66,6 +66,23 @@ def test_abandon_no_arbitrage(base_sim):
     assert abs(r.add_on) < 1.0
 
 
+def test_decisions_use_only_prices_already_seen(defer_sim):
+    # the decision at the start of year y may use prices up to year y - 1, so with the values of
+    # committing held fixed, scrambling the prices from the last decision year on changes nothing
+    price, gen = defer_sim
+    ex = lsm.commit_npvs(price, gen, P.DEFERRAL_MAX_YEARS)
+    scrambled = price.copy()
+    later = slice(P.DEFERRAL_MAX_YEARS, None)
+    scrambled[:, later] = np.random.default_rng(0).permutation(scrambled[:, later])
+    seen = lsm.defer_option(price, gen, ex=ex)
+    unseen = lsm.defer_option(scrambled, gen, ex=ex)
+    assert unseen.option_value == seen.option_value
+    assert np.array_equal(unseen.commit_year, seen.commit_year)
+    # the first decision sees only history, the same on every path, so it is all or nothing
+    first = seen.commit_year == 0
+    assert first.all() or not first.any()
+
+
 def test_options_never_negative(defer_sim):
     price, gen = defer_sim
     # the right to walk away / decline is worth at least zero
