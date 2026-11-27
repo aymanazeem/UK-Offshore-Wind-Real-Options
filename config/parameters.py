@@ -46,7 +46,8 @@ PHASE2_CAPACITY_MW = 500.0      # the optional +0.5 GW Phase-2 expansion
 OPERATING_LIFE_YEARS = 35       # years of operation after commissioning
 CONSTRUCTION_YEARS = 5          # years of construction before first power; CAPEX is spread over these
 HOURS_PER_YEAR = 8760.0
-DEGRADATION_RATE = 0.005        # output falls ~0.5%/yr with age (industry placeholder)
+DEGRADATION_RATE = 0.005        # my assumption, a rule of thumb: output falls ~0.5%/yr with age.
+                                # It shapes output over the life; the average stays CF_MEAN.
 
 # CAPEX and OPEX from Arup for DESNZ Table 3, which publishes them in 2023 prices; the figures
 # below are Arup's, restated in PRICE_BASE_YEAR prices by ARUP_TO_BASE_YEAR. Arup's report builds
@@ -60,7 +61,14 @@ def _restate_arup(published: dict) -> dict:
     return {case: value * ARUP_TO_BASE_YEAR for case, value in published.items()}
 
 
-CAPEX_PER_KW = _restate_arup({"low": 3321.0, "central": 3976.0, "high": 4439.0})   # £/kW, installed
+# Arup's total CAPEX (£3,321 / 3,976 / 4,439 per kW) also includes £802 / 937 / 1,030 of
+# infrastructure: the offshore transmission link. The developer sells that to an offshore
+# transmission owner (OFTO) and the farm pays for it through the TNUoS grid charge in OPEX, so Arup
+# leaves it out of its LCOE. The model does the same, or transmission would be paid for twice.
+_ARUP_PREDEVELOPMENT = {"low": 104.0, "central": 216.0, "high": 308.0}
+_ARUP_CONSTRUCTION = {"low": 2415.0, "central": 2823.0, "high": 3101.0}
+CAPEX_PER_KW = _restate_arup({case: _ARUP_PREDEVELOPMENT[case] + _ARUP_CONSTRUCTION[case]
+                              for case in _ARUP_CONSTRUCTION})                      # £/kW
 OPEX_PER_MW_YEAR_K = _restate_arup({"low": 73.7, "central": 138.5, "high": 207.2})  # k£/MW/yr, total
 # OPEX split out so the sensitivity can flex the big, location-specific grid charge (TNUoS)
 # separately from the rest. The two add up to OPEX_PER_MW_YEAR_K.
@@ -75,22 +83,30 @@ DECOMMISSIONING_PER_MW = 300_000.0
 # --------------------------------------------------------------------------------------------
 # Money and tax
 # --------------------------------------------------------------------------------------------
-WACC = 0.062                                       # pre-tax real discount rate (DESNZ/Arup central)
-WACC_RANGE = {"low": 0.05, "central": 0.062, "high": 0.09}
-TAX_RATE = 0.25                                    # UK corporation tax main rate
+# Arup's hurdle rate, 6.2%, is pre-tax and real: Arup converted BloombergNEF's post-tax nominal cost
+# of capital with 2% inflation and 25% tax, by the BEIS 2018 method, which grosses up for tax in
+# nominal terms. A pre-tax rate belongs with cash flows before tax, so the base case values
+# pre-tax cash flows, as Arup's LCOE does; taxing them as well would count tax twice. The
+# after-tax view taxes the cash flows and discounts them at the rate that conversion started from.
+WACC = 0.062
+WACC_RANGE = {"low": 0.05, "central": WACC, "high": 0.09}   # my test range; Arup gives one rate
+TAX_RATE = 0.25                                    # UK corporation tax main rate (after-tax view)
+INFLATION = 0.02                                   # Arup's, for that conversion and the allowances
+POST_TAX_WACC = ((1.0 + (1.0 - TAX_RATE) * ((1.0 + WACC) * (1.0 + INFLATION) - 1.0))
+                 / (1.0 + INFLATION) - 1.0)
 
-# Capital allowances: the tax deduction the CAPEX earns. We use the UK 18% writing-down
-# allowance (reducing balance) on the whole CAPEX, with a balancing allowance clearing whatever
-# is left in the final year. This is the standard UK plant-and-machinery treatment, so it is the
-# realistic base case. The total deduction always equals CAPEX; only its timing is front-loaded,
-# which brings the tax shield forward and raises NPV versus spreading it straight-line.
+# Capital allowances in the after-tax view: the tax deduction the CAPEX earns, at the UK main-pool
+# writing-down allowance of 18% of the remaining balance a year, with a balancing allowance
+# clearing what is left in the final year. Whether an offshore wind farm's assets qualify for this
+# pool or another is not checked here. Allowances are set on the CAPEX in the pounds of the year
+# it is spent and are not indexed, so at INFLATION they add up to less than the CAPEX in real terms.
 WDA_RATE = 0.18
 
 # --------------------------------------------------------------------------------------------
 # Generation: capacity factor (how much of the nameplate the wind actually delivers)
 # --------------------------------------------------------------------------------------------
-# Net load factor for a modern farm (net of wake and availability losses), Arup for DESNZ Table 3,
-# the same source as the costs and the LCOE benchmark.
+# Net load factor for a modern farm, Arup for DESNZ Table 3: a lifetime average net of all losses,
+# wear with age included, from the same source as the costs and the LCOE benchmark.
 CF_MEAN = 0.505
 CF_RANGE = {"low": 0.460, "central": CF_MEAN, "high": 0.561}
 # Year-to-year variability. Measured from cf_annual.csv, a 20-year renewables.ninja series for one
@@ -128,7 +144,7 @@ EXPAND_CAPEX_LEARNING = 0.075           # Phase 2 CAPEX is ~7.5% cheaper (build-
 
 # Abandon = a mid-life sale of the operating asset to a lower-cost-of-capital buyer. Both inputs
 # are PLACEHOLDERS, reported only as a sensitivity.
-BUYER_WACC = 0.05                       # PLACEHOLDER: the buyer's lower discount rate
+BUYER_WACC = 0.05                       # PLACEHOLDER: the buyer's lower discount rate, pre-tax
 TRANSACTION_COST = 0.02                 # PLACEHOLDER: sale cost, as a fraction of asset value
 
 # Longstaff-Schwartz regression: fit the "value of waiting" with a quadratic in the price.

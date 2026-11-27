@@ -1,8 +1,18 @@
 # Modelling decisions
 
-This page records the main choices behind the model, the alternatives I considered, the evidence for each, and what each choice is worth. Values are the mean NPV across 50,000 simulated futures with seed 42, unless I say otherwise.
+This page records the main choices behind the model, the alternatives I considered, the evidence for each, and what each choice is worth. Values are the mean NPV across 50,000 simulated futures with seed 42, unless I say otherwise. The central NPV is +£0.003bn, so each effect below is roughly the NPV the alternative would give.
 
-## Money and prices
+## Money and discounting
+
+### Cash flows are valued before tax
+
+I discount at Arup's 6.2%, a real rate before tax. Arup built it from BloombergNEF's after-tax, nominal costs of debt and equity, converting them with 2% inflation and 25% corporation tax by the method in BEIS's 2018 cost of capital report. A rate grossed up for tax belongs with cash flows before tax, which is also how Arup's LCOE is built. So the base case values cash flows before tax. Taking 25% tax off them and still discounting at 6.2% would count tax twice and lower the NPV by £0.24bn.
+
+The after-tax view taxes the cash flows at 25%, with the main-pool writing-down allowance of 18% a year, and discounts them at the rate Arup's conversion started from. The BEIS method grosses up for tax in nominal terms, so undoing it gives 4.16% after tax in real terms, and an NPV of +£0.35bn. Applying the gross-up to real rates instead would give (1 − 25%) × 6.2% = 4.65% and +£0.17bn.
+
+UK allowances are set on the build cost in the pounds of the year it is spent and are not indexed, so in the after-tax view they lose value to Arup's 2% inflation. Indexing them would add £0.06bn. The view also leaves out any tax relief on decommissioning, worth at most £0.015bn.
+
+The after-tax view is higher than the base case because the allowances deduct the build cost much faster than the farm loses value, 18% in the first year against about 2%, which pushes tax later. With allowances that only kept pace with the farm's loss of value, the after-tax view would be +£0.02bn at 4.65%, in line with the base case, and +£0.21bn at 4.16%, where the rest comes from the lower rate. I keep the pre-tax view as the base case because it uses Arup's rate as published, and because I have not checked which allowances an offshore wind farm qualifies for, which could move the after-tax view either way.
 
 ### Everything is in real 2024 pounds
 
@@ -16,47 +26,80 @@ I use CPI because CfD strike prices are set in 2024 prices and rise with CPI, so
 
 The alternative is the GDP deflator, which Arup uses to bring its survey data to 2023 prices. It rose 3.8% from 2023 to 2024, against 2.6% for CPI. Restating Arup's costs with it would lower the NPV by £0.05bn.
 
-Against leaving each figure in its published prices, restating the price history lowers the NPV by £0.01bn, and restating Arup's costs lowers it by £0.10bn.
+Against leaving each figure in its published prices, restating the price history lowers the NPV by £0.02bn, and restating Arup's costs lowers it by £0.11bn.
+
+## Prices
 
 ### Negative prices stay in
 
-The daily price is the volume-weighted average of every half-hour that traded on the APX index. That includes the 1,170 half-hours in the fit window, January 2024 to June 2026, when the price went negative. These are real trades, mostly in windy hours of low demand, so leaving them out would overstate the average. In 2024 pounds the window averages £78.40/MWh with them and £80.01 without, 2.0% higher. Keeping them lowers the NPV by £0.02bn.
+The daily price is the volume-weighted average of every half-hour that traded on the APX index. That includes the 1,170 half-hours in the fit window, January 2024 to June 2026, when the price went negative. These are real trades, mostly in windy hours of low demand, so leaving them out would overstate the average. In 2024 pounds the window averages £78.40/MWh with them and £80.01 without, 2.0% higher. Keeping them lowers the NPV by £0.03bn.
 
 The model works in log prices, which need a positive price, so the two days whose whole-day average was negative, 7 April 2024 and 28 June 2025, are left out of the fit.
 
 ### The fast price swings are measured imprecisely
 
-The short-term wobble is fitted to 29 month-to-month changes. Its half-life comes out at 18 days, but one standard error either side spans 10 to 30 days, so small changes to the data move it noticeably. It matters little: yearly prices average the fast swings out, and swapping in a fit with a 33 day half-life moves the NPV by less than £0.001bn.
+The short-term wobble is fitted to 29 month-to-month changes. Its half-life comes out at 18 days, but one standard error either side spans 10 to 30 days, so small changes to the data move it noticeably. It matters little: yearly prices average the fast swings out, and swapping in a fit with a 33 day half-life moves the NPV by about £0.001bn.
 
 ### Each operating year earns its own year's price
 
-The simulated prices count years from today. A farm committed in year d builds for 5 years, so in operating year j it earns the price simulated for year d + 5 + j. This only matters once the CfD ends: the 21st year of operation falls 26 years from today. Reading each year's price as if there were no build would lower the NPV by £0.004bn, because later prices average slightly higher and spread wider.
+The simulated prices count years from today. A farm committed in year d builds for 5 years, so in operating year j it earns the price simulated for year d + 5 + j. This only matters once the CfD ends: the 21st year of operation falls 26 years from today. Reading each year's price as if there were no build would lower the NPV by £0.006bn, because later prices average slightly higher and spread wider.
 
 ## Costs and output
 
 ### Costs and load factor from one source
 
-The build cost, the operating cost and the net load factor, 0.505 with a range of 0.460 to 0.561, all come from Arup's 2024 report for DESNZ. That report is also the source of the LCOE benchmark, so the model and the benchmark rest on the same inputs. A load factor of 0.50 instead would lower the NPV by £0.03bn.
+The build cost, the operating cost and the net load factor, 0.505 with a range of 0.460 to 0.561, all come from Arup's 2024 report for DESNZ. That report is also the source of the LCOE benchmark, so the model and the benchmark rest on the same inputs. A load factor of 0.50 instead would lower the NPV by £0.04bn.
+
+### Wear is counted once
+
+Arup defines its load factor as the ratio of average annual output to full-capacity output over the plant's lifetime, net of all losses, and its list of losses includes degradation. So 0.505 already allows for wear. Output does fall as turbines wear, so the model keeps a 0.5%/yr decline but scales it to average 1 over the 35 years: the capacity factor starts at 0.549, ends at 0.463 and averages 0.505.
+
+- Taking the decline off 0.505 instead would count wear twice, leave a lifetime average of 0.464 and lower the NPV by £0.34bn.
+- A flat 0.505 in every year would lower the NPV by £0.14bn and raise the CfD break-even to £94.39/MWh, because more of the output would come later.
+- The 0.5%/yr rate itself is an industry rule of thumb, not a sourced figure. It only shapes output over the life; the average is fixed by Arup.
+
+### The transmission link is paid for once
+
+Arup's total build cost, £3,976/kW in 2023 prices, includes £937/kW of infrastructure. Arup states that these costs relate to the offshore transmission owner (OFTO) and should not be included in the LCOE, because they are reimbursed to the developer through the OFTO regime and covered by the TNUoS charges the generator pays. The model includes TNUoS, £85,600/MW/yr, in operating costs, so it leaves the £937/kW out of the build cost. Counting both would lower the NPV by £0.83bn.
+
+In practice the developer pays for the link during the build and recovers its value when the link is sold to the OFTO, after commissioning. Funding it in between costs £0.16bn in today's money if the sale comes a year after first power, rising to £0.27bn after four years, unless the sale price also covers the financing cost. Leaving the link out, as Arup does, ignores that cost.
+
+### The LCOE check
+
+With the same inputs, the model's pre-tax LCOE is £86.52/MWh, against Arup's £88.5 in 2023 prices, or £90.81 in 2024 pounds. Applying Arup's conventions one at a time closes the gap almost entirely, which is the best check that the model counts what Arup counts:
+
+| Step, £/MWh in 2024 pounds | LCOE | Change |
+|---|---|---|
+| The model | 86.52 | |
+| Leave out decommissioning, as Arup's LCOE does | 85.97 | −0.55 |
+| Spend development costs over the 7 years before construction | 87.68 | +1.71 |
+| Phase construction as Arup does, 21.6% a year for four years then the rest | 88.16 | +0.47 |
+| Hold output flat at 0.505 over the life | 90.70 | +2.54 |
+| Arup | 90.81 | 0.11 left |
+
+### Development costs are counted at the decision
+
+The model counts Arup's development costs, £222/kW in 2024 pounds, as part of the build cost, spread over the 5 year build. In practice they are spent over the years before construction, so a developer deciding whether to build would already have spent them. I keep them in to show the value of the whole project, and this choice matters for the options:
+
+- Treating them as already spent would raise the commit-now NPV by £0.19bn. Building now would then be best in every future, and the right to wait would add nothing.
+- Spending them over the 7 years before construction, as Arup's LCOE does, would lower the NPV by £0.08bn.
 
 ### Decommissioning
 
 I use £300,000/MW in the final year, a central gross figure within the ranges from DNV (€200,000 to €600,000/MW) and the Crown Estate (about £426,000/MW). Neither states its price year. Arup's survey average is much lower, £86,000/MW in 2023 prices, but it is net of scrap sales, and Arup leaves decommissioning out of its LCOE. Using Arup's figure would raise the NPV by £0.02bn.
 
-### Open: wear and transmission are counted twice
-
-Two costs appear twice, and together they explain most of the £22/MWh gap between my LCOE and Arup's:
-
-- Arup's load factor is an average over the farm's life, net of all losses, wear included. The model also takes 0.5%/yr off output as the turbines age, so its lifetime average is 0.465, not 0.505.
-- Arup's total build cost includes £937/kW of infrastructure, the offshore transmission link. The developer sells that link to an offshore transmission owner (OFTO), and the farm then pays for it through the TNUoS grid charge, which the model also includes. Arup leaves the infrastructure out of its LCOE for that reason.
-
 ## Revenue
 
 ### The CfD strike price and its range
 
-The central strike price is £90.91/MWh for 20 years. It is the 2026 auction's average for fixed offshore wind across its regions, £91.20 in England and Wales and £89.49 in Scotland, in 2024 prices. The high case is that auction's £113 cap. The low case is the 2024 auction's price for new fixed offshore wind, £58.87/MWh in 2012 prices, or £82.03 in 2024 pounds. That auction gave 15 year contracts, and a 20 year contract would clear lower, so £82.03 is a cautious low end. The range affects only the sensitivity.
+The central strike price is £90.91/MWh for 20 years. It is the 2026 auction's average for fixed offshore wind across its regions, £91.20 in England and Wales and £89.49 in Scotland, in 2024 prices. The high case is that auction's £113 cap. The low case is the 2024 auction's price for new fixed offshore wind, £58.87/MWh in 2012 prices, or £82.03 in 2024 pounds. That auction gave 15 year contracts, and a 20 year contract would clear lower, so £82.03 is a cautious low end.
 
 ## Options
 
-### Decisions use the price of the decision year
+### Decisions use only prices already seen
 
-The option engine decides each year from that year's average price. That average includes months the owner has not yet seen, so it slightly flatters the decisions. It has no effect on the current results, because the farm is never built under the defer option and the sale happens at the start on every path. Near break-even it can add a few million pounds to an option's value; using the last completed year's price instead would remove that.
+The option engine decides at the start of each year, using the average price of the year just ended. At the first decision the owner knows only the price history, which is the same in every future, so the decision cannot depend on which future is unfolding. Deciding instead on the average of the year that is starting would let the owner see months that have not happened yet, and would raise the farm's value with the right to defer from £22.9m to £26.3m, and the expand option from £16.8m to £19.0m.
+
+### The same contract is available in every year
+
+The defer option assumes the same CfD, at the same strike price, is available whenever the owner decides to build. In practice a project bids into a particular auction, and later rounds clear at different prices, so the true value of waiting also depends on what those rounds pay, which the model does not capture.

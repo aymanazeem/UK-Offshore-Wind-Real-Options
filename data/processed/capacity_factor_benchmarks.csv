@@ -8,4 +8,4 @@ desnz_net_lf_low,0.46,fraction,2024,"Arup for DESNZ 2024",low scenario
 desnz_net_lf_central,0.505,fraction,2024,"Arup for DESNZ 2024",central scenario
 desnz_net_lf_high,0.561,fraction,2024,"Arup for DESNZ 2024",high scenario
 irena_europe_cf,0.48,fraction,2024,"IRENA 2024","Europe new-build; Denmark 0.52"
-degradation,0.005,fraction_per_year,,"industry placeholder","minor lever"
+degradation,0.005,fraction_per_year,,"industry rule of thumb","shapes output over the life; the lifetime average stays at the net load factor"

@@ -1,5 +1,6 @@
 """Checks on the generation model: the fitted Beta reproduces the target capacity-factor mean and
-spread, and generation de-rates with age."""
+spread, generation falls with age, and the lifetime average still matches the load factor, which
+already allows for wear."""
 
 from __future__ import annotations
 
@@ -21,3 +22,9 @@ def test_generation_derates_with_age():
     assert mean_by_year[-1] < mean_by_year[0]                       # output falls with age
     expected_last = mean_by_year[0] * (1.0 - P.DEGRADATION_RATE) ** (gp.generation_mwh.shape[1] - 1)
     assert mean_by_year[-1] == pytest.approx(expected_last, rel=1e-2)
+
+
+def test_lifetime_average_output_matches_the_load_factor():
+    gp = gm.simulate_generation(n_paths=8000, seed=7)
+    expected = P.CAPACITY_MW * P.CF_MEAN * P.HOURS_PER_YEAR
+    assert gp.generation_mwh.mean() == pytest.approx(expected, rel=2e-3)
