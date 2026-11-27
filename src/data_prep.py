@@ -17,19 +17,10 @@ import pandas as pd
 from config import parameters as P
 
 
-def _find_raw(raw_dir: Path = P.DATA_RAW_DIR) -> Path:
-    """Pick the widest download, the earliest start date, so dropping in a shorter recent pull
-    cannot silently shorten the calibration series. Filename is
-    elexon_market_index_{start}_{end}.csv and the YYYY-MM-DD start sorts chronologically."""
-    matches = list(raw_dir.glob("elexon_market_index_*.csv"))
-    if not matches:
-        raise FileNotFoundError(f"no elexon_market_index_*.csv found in {raw_dir}")
-    return min(matches, key=lambda p: p.stem.split("_")[-2])
-
-
-def build_daily_price(raw_path: Path | None = None) -> pd.DataFrame:
+def build_daily_price(raw_path: Path = P.PRICE_RAW_CSV) -> pd.DataFrame:
     """Volume-weighted daily APX Market Index Price, dropping the zero-reporting N2EX feed."""
-    raw_path = _find_raw() if raw_path is None else raw_path
+    if not raw_path.exists():
+        raise FileNotFoundError(f"{raw_path} not found; run `make data` to download it")
     df = pd.read_csv(raw_path)
 
     # keep only APX rows with a real trade, drop the dead N2EX feed and any zero-price half-hours
@@ -46,7 +37,7 @@ def build_daily_price(raw_path: Path | None = None) -> pd.DataFrame:
     return pd.DataFrame({"date": days, "price_gbp_per_mwh": vw})
 
 
-def write_daily_csv(out_path: Path = P.PRICE_DAILY_CSV, raw_path: Path | None = None) -> pd.DataFrame:
+def write_daily_csv(out_path: Path = P.PRICE_DAILY_CSV, raw_path: Path = P.PRICE_RAW_CSV) -> pd.DataFrame:
     daily = build_daily_price(raw_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     daily.to_csv(out_path, index=False)
@@ -54,12 +45,11 @@ def write_daily_csv(out_path: Path = P.PRICE_DAILY_CSV, raw_path: Path | None = 
 
 
 def main() -> None:
-    raw_path = _find_raw()
-    daily = write_daily_csv(raw_path=raw_path)
+    daily = write_daily_csv()
     d = daily["date"].to_numpy()
     p = daily["price_gbp_per_mwh"].to_numpy()
     yr = d.astype("U4")
-    print(f"Wrote {len(daily):,} daily prices from {raw_path.name} -> {P.PRICE_DAILY_CSV.name}")
+    print(f"Wrote {len(daily):,} daily prices from {P.PRICE_RAW_CSV.name} -> {P.PRICE_DAILY_CSV.name}")
     print(f"  {d[0]} -> {d[-1]}   overall mean £{p.mean():.1f}/MWh")
     for y in np.unique(yr):
         print(f"  {y}: £{p[yr == y].mean():.1f}/MWh")
