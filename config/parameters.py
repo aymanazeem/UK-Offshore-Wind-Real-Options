@@ -67,8 +67,9 @@ WDA_RATE = 0.18
 # Net load factor for a modern farm (net of wake and availability losses), DESNZ/IRENA central.
 CF_MEAN = 0.50
 CF_RANGE = {"low": 0.46, "central": 0.50, "high": 0.56}   # DESNZ low / central / high
-# Year-to-year variability. Measured from a 20-year renewables.ninja series (cf_annual.csv);
-# this fallback is used only if that file is missing.
+# Year-to-year variability. Measured from cf_annual.csv, a 20-year renewables.ninja series for one
+# turbine in the Dogger Bank grid cell (MERRA-2 weather, 2000-2019); this fallback is used only if
+# that file is missing.
 CF_SD_FALLBACK = 0.045
 
 # --------------------------------------------------------------------------------------------
@@ -113,6 +114,13 @@ RANDOM_SEED = 42
 # --------------------------------------------------------------------------------------------
 # Price model (two-factor, calibrated in src/price_simulator.py -> config/price_calibrated.json)
 # --------------------------------------------------------------------------------------------
+# Raw half-hourly prices: Elexon Market Index Data (MID), free with no key, from
+# https://data.elexon.co.uk/bmrs/api/v1/datasets/MID. src/download_prices.py fetches these
+# settlement dates; Elexon has no market index prices for 35 of them, all in 2018 to 2021.
+PRICE_DOWNLOAD_START = "2018-01-01"
+PRICE_DOWNLOAD_END = "2026-06-30"
+PRICE_RAW_CSV = DATA_RAW_DIR / f"elexon_market_index_{PRICE_DOWNLOAD_START}_{PRICE_DOWNLOAD_END}.csv"
+
 # We fit the short-term (fast-reverting) part of the price to recent history, from this date on.
 # Starting in 2024 deliberately excludes the 2021-23 gas-crisis spike, a once-in-a-generation
 # shock that would otherwise dominate a 35-year forward simulation.

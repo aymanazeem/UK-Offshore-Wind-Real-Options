@@ -149,7 +149,7 @@ All money is in real 2024 pounds. Where a source gives a range I use the central
 
 | Input | Source | Value |
 |---|---|---|
-| Wholesale price history | Elexon | Daily GB price, short-term fit from January 2024 |
+| Wholesale price history | Elexon market index data, January 2018 to June 2026 | Daily GB price, short-term fit from January 2024 |
 | Build cost (CAPEX) | Arup for the UK government, 2024 | £3,976/kW, over a 5 year build |
 | O&M + insurance | Arup for the UK government, 2024 | £55,100/MW/yr |
 | Grid charge (TNUoS) | Arup for the UK government, 2024 | £83,400/MW/yr |
@@ -163,14 +163,17 @@ All money is in real 2024 pounds. Where a source gives a range I use the central
 | Second phase cost saving | Arup and IRENA learning rates | 7.5% |
 | Buyer discount rate, sale cost | Not sourced, placeholders | 5.0%, 2% |
 
+The price history contains BMRS data © Elexon Limited copyright and database right 2026, used under the [BMRS data licence](https://www.elexon.co.uk/bsc/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/).
+
 ## What I could not pin down
 
-Four things are weaker than the rest, and I flag them.
+Five things are weaker than the rest, and I flag them.
 
 - The long-term price volatility, 6%/yr, is a literature assumption, not something the data can pin down. It drives most of the option value, so I report it as a range.
 - The buyer's discount rate and sale cost in the abandon option, 5.0% and 2%, have no single source.
 - The short-term price fit uses only 30 months. This is deliberate, to exclude the gas crisis, and it only sets the fast wobble. The long-run uncertainty comes from the drift.
 - The grid charge is at the central, location-specific figure. A better sited farm pays far less, so part of the loss is a siting choice.
+- The year to year spread of output comes from renewables.ninja, a free tool that estimates a turbine's output from past weather. I used one turbine at Dogger Bank in the North Sea, with NASA's MERRA-2 record of the weather from 2000 to 2019. I did not record the turbine model or hub height, so I cannot regenerate that series exactly. The model uses only its spread, a standard deviation of about 4% of average output, which is small next to the price uncertainty.
 
 ## Running it
 
@@ -178,14 +181,19 @@ You need Python 3.12, 3.13 or 3.14, and the automatic checks on GitHub use 3.13.
 
 ```bash
 make install      # create ./venv if needed, then install the pinned dependencies
+make data         # download the Elexon price history and rebuild the daily price file
 make test         # run the test suite
 make charts       # regenerate every chart at 50,000 paths
 make lcoe         # print the levelised cost reconciliation
 ```
 
+`make data` needs internet access and takes a couple of minutes. It fetches the dates set in `config/parameters.py` and, unless Elexon revises its records, reproduces the committed `data/processed/gb_price_daily.csv`. `make price` then refits the price model to it.
+
 Each part also runs on its own.
 
 ```bash
+./venv/bin/python -m src.download_prices      # fetch the raw half-hourly prices from Elexon
+./venv/bin/python -m src.data_prep            # turn them into the daily price series
 ./venv/bin/python -m src.price_simulator      # recalibrate and show the price range widening
 ./venv/bin/python -m src.financial_model      # the static NPV
 ./venv/bin/python -m src.lsm_engine --option=defer
@@ -200,11 +208,12 @@ Each file has one job, and the calculation is kept separate from the charts, so 
 
 ```mermaid
 flowchart TD
-    elexon(["Elexon price download"])
+    elexon(["Elexon market index API"])
     ninja(["cf_annual.csv, renewables.ninja"])
     params["config/parameters.py, every input"]
 
-    elexon --> prep["data_prep.py"]
+    elexon --> dl["download_prices.py"]
+    dl -->|"half-hourly prices"| prep["data_prep.py"]
     prep -->|"clean daily prices"| daily[("gb_price_daily.csv")]
 
     daily --> cal["price_simulator.py, calibrate"]
@@ -234,6 +243,7 @@ flowchart TD
 | File | Job |
 |---|---|
 | config/parameters.py | Every input number, in one place |
+| src/download_prices.py | Download the raw half-hourly prices from Elexon |
 | src/data_prep.py | Turn the raw price download into a clean daily series |
 | src/price_simulator.py | Calibrate and simulate the electricity price |
 | src/generation_model.py | Turn the capacity factor into yearly output |
@@ -242,5 +252,5 @@ flowchart TD
 | src/lsm_engine.py | Value the defer, expand and abandon options |
 | src/sensitivity.py | Show which input moves the NPV most |
 | src/visualisation.py | Draw every chart |
-| tests/ | Checks on the maths, including the option engine against a known answer |
+| tests/ | Checks on the maths, including the option engine against a known answer, and on the price download |
 ```

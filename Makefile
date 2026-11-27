@@ -8,11 +8,12 @@ PIP := ./venv/bin/pip
 # path count; override e.g. `make charts N=10000`
 N ?= 50000
 
-.PHONY: help install test charts charts-final price generation npv lcoe sensitivity defer expand abandon clean
+.PHONY: help install data test charts charts-final price generation npv lcoe sensitivity defer expand abandon clean
 
 help:
 	@echo "Targets:"
 	@echo "  install       create ./venv if missing and install the pinned deps (PYTHON=... picks Python 3.12-3.14)"
+	@echo "  data          download the Elexon price history and rebuild data/processed/gb_price_daily.csv"
 	@echo "  test          run the pytest suite"
 	@echo "  charts        regenerate all charts (N=$(N) paths; override with N=...)"
 	@echo "  charts-final  regenerate all charts at production quality (N_PATHS_FINAL)"
@@ -26,6 +27,10 @@ install: $(PIP)
 $(PIP):
 	@$(PYTHON) -c 'import sys; v = sys.version_info[:2]; sys.exit("Python 3.12 to 3.14 is needed, found %s. Try: make install PYTHON=python3.13" % sys.version.split()[0]) if not (3, 12) <= v <= (3, 14) else None'
 	$(PYTHON) -m venv venv
+
+data:
+	$(PY) -m src.download_prices
+	$(PY) -m src.data_prep
 
 test:
 	$(PY) -m pytest -q
