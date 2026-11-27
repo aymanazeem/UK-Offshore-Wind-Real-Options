@@ -30,6 +30,18 @@ Against leaving each figure in its published prices, restating the price history
 
 ## Prices
 
+### Two price factors, a fast wobble and a slow drift
+
+The log price is a seasonal pattern plus two random parts, the structure Schwartz and Smith (2000) proposed for commodity prices: a short-term factor that pulls back towards normal, and a long-term level that moves on a random walk with no pull back. A model with only the pull-back settles into a fixed band within weeks, so its range barely grows with the horizon and every timing option comes out worthless by construction. The random walk lets the range keep widening, as long-dated prices do: the P90 to P10 ratio grows from 1.23 in year 1 to 2.65 in year 40.
+
+### The fit starts in January 2024
+
+I fit the season and the short-term factor to January 2024 to June 2026, which leaves out the 2021 to 2023 gas crisis, a one-off shock that would otherwise dominate a 40 year forecast. Fitting from 2018 instead, crisis included, would slow the pull-back from an 18 day half-life to 224 days and lift the average merchant-year price from £80 to £104/MWh. The NPV would rise to +£0.19bn, and waiting would be worth nothing. The cost of the shorter window is a less precise short-term fit, below.
+
+### The long-term drift is my assumption
+
+Thirty months cannot show how fast the long-run level moves, so I set its volatility at 6%/yr and test 4% to 10%. Across that range the NPV moves from -£0.02bn to +£0.07bn, the value of waiting from £0.023bn to £0.014bn, and the expansion option from £0.002bn to £0.092bn. Prices are lognormal, so a higher volatility also raises the average price: the average merchant-year price is £78, £80 and £89/MWh at 4%, 6% and 10%. That is why the value of waiting falls as volatility rises, since building now becomes more attractive. I also assume the level has no trend, so real prices neither rise nor fall on average.
+
 ### Negative prices stay in
 
 The daily price is the volume-weighted average of every half-hour that traded on the APX index. That includes the 1,170 half-hours in the fit window, January 2024 to June 2026, when the price went negative. These are real trades, mostly in windy hours of low demand, so leaving them out would overstate the average. In 2024 pounds the window averages £78.40/MWh with them and £80.01 without, 2.0% higher. Keeping them lowers the NPV by £0.03bn.
@@ -94,7 +106,21 @@ I use £300,000/MW in the final year, a central gross figure within the ranges f
 
 The central strike price is £90.91/MWh for 20 years. It is the 2026 auction's average for fixed offshore wind across its regions, £91.20 in England and Wales and £89.49 in Scotland, in 2024 prices. The high case is that auction's £113 cap. The low case is the 2024 auction's price for new fixed offshore wind, £58.87/MWh in 2012 prices, or £82.03 in 2024 pounds. That auction gave 15 year contracts, and a 20 year contract would clear lower, so £82.03 is a cautious low end.
 
+### The capture factor is my assumption
+
+After the CfD the farm sells at the market price, but wind earns less than the time-average price, because every wind farm generates in the same windy hours and that depresses the price then. I apply a capture factor of 0.85 to the merchant years, which fall in the 2050s and 2060s. It is my assumption, not a sourced figure. Across 0.70 to 1.00 it moves the NPV by £0.11bn either way, the smallest swing of any input I test, because the merchant years are far off and heavily discounted.
+
 ## Options
+
+### Longstaff-Schwartz with a quadratic in price
+
+I value the options with the least-squares Monte Carlo method of Longstaff and Schwartz (2001), the standard method for options that can be exercised on many dates. At each decision it estimates the value of acting and of waiting from the price already seen, by fitting a quadratic across all futures. The test suite checks the engine against a binomial tree on a textbook American put, to within about 3%. A straight line or a cubic instead of the quadratic changes the option values by less than £0.001bn.
+
+### What each option means
+
+- Defer is the right to delay committing the farm by up to 4 years, including the right never to build. Four years is my choice. The value rises with each extra year allowed, from £0.003bn with no wait to £0.023bn with 4 years.
+- Expand is the right to add a fully merchant 500 MW second phase in any year from 3 to 8 years after first power, at a 7.5% lower build cost. The saving is my assumption for lessons learned on the first phase. Arup's medium case has industry build costs flat to 2035 and 4.2% lower by 2040. With no saving the option would be worth £0.011bn, with 4.2% £0.014bn, and with 7.5% £0.017bn.
+- Abandon is the right to sell the running farm to a buyer with a cheaper cost of capital. It is a financing gain rather than flexibility, and its two inputs, the buyer's 5.0% rate and the 2% sale cost, have no source, so it is illustrative only.
 
 ### Decisions use only prices already seen
 

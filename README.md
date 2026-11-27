@@ -43,7 +43,7 @@ The long-term drift is what matters for the options. It lets the price range kee
 
 I track the spread with P10 and P90, the prices that only 10% of futures fall below and rise above, with P50 the median. The P90 to P10 ratio grows from 1.23 in year 1 to 2.65 in year 40, so a year 1 range of roughly £69 to £84 becomes £46 to £123 by year 40. The average simulated price over the farm's life, £79, matches the average of the 30 months the fit uses. The median sits lower, near £76, because high prices stretch further above it than low prices fall below.
 
-I cannot estimate the drift's size from 30 months of data, so I set it from the literature at 6%/yr and treat it as an assumption to test. I start the fit in 2024 on purpose, to exclude the 2021 to 2023 gas crisis, a one-off that would otherwise dominate a 40 year forecast.
+I cannot estimate the drift's size from 30 months of data, so I set it at 6%/yr and treat it as an assumption to test. I start the fit in 2024 on purpose, to exclude the 2021 to 2023 gas crisis, a one-off that would otherwise dominate a 40 year forecast.
 
 ![Price fan](outputs/charts/chart1_price_fan.png)
 
@@ -111,7 +111,7 @@ Defer, the right to wait up to 4 years, adds +£0.02bn to committing now. Waitin
 
 *Waiting with the right to walk away is worth most. Waiting with a duty to build by year 4 adds less.*
 
-Expand, the right to add a 500 MW phase in years 8 to 13 at a 7.5% lower build cost (£2,884/kW) from lessons learned, is worth +£0.02bn. Built at the first chance, a merchant second phase would lose £0.23bn, so its value is the right to build only where prices have risen far enough, which happens in 17% of futures.
+Expand, the right to add a 500 MW phase in years 8 to 13 at a 7.5% lower build cost (£2,884/kW), my assumption for lessons learned on the first phase, is worth +£0.02bn. Built at the first chance, a merchant second phase would lose £0.23bn, so its value is the right to build only where prices have risen far enough, which happens in 17% of futures.
 
 ![Expand option](outputs/charts/chart5_expand.png)
 
@@ -161,11 +161,11 @@ All money is in real 2024 pounds. Figures published in another year's prices are
 | Decommissioning | DNV, Crown Estate | £300,000/MW in the final year, price year not stated |
 | Corporation tax | UK main rate | 25%, with an 18% writing-down allowance on the nominal build cost, in the after-tax view only |
 | Merchant capture factor | My assumption, for cannibalisation | 0.85 |
-| Long-term price volatility | My assumption, from the literature | 6%/yr |
-| Second phase cost saving | Arup and IRENA learning rates | 7.5% |
+| Long-term price volatility | My assumption, tested from 4% to 10% | 6%/yr |
+| Second phase cost saving | My assumption; Arup's medium case has industry costs flat to 2035 and 4.2% lower by 2040 | 7.5% |
 | Buyer discount rate, sale cost | Not sourced, placeholders | 5.0%, 2% |
 
-The price history contains BMRS data © Elexon Limited copyright and database right 2026, used under the [BMRS data licence](https://www.elexon.co.uk/bsc/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/). The consumer price index is from the Office for National Statistics, licensed under the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
+The price history contains BMRS data © Elexon Limited copyright and database right 2026, used under the [BMRS data licence](https://www.elexon.co.uk/bsc/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/). The consumer price index is from the Office for National Statistics, licensed under the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/). The output series in `data/processed/cf_annual.csv` is from [Renewables.ninja](https://www.renewables.ninja), licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/): I. Staffell and S. Pfenninger (2016), Using bias-corrected reanalysis to simulate current and future wind power output, Energy 114, 1224–1239.
 
 ## What I could not pin down
 
@@ -174,7 +174,7 @@ Eight things are weaker than the rest, and I flag them.
 - The tax basis. Before tax, on Arup's basis, the farm breaks even. After tax it looks better, at +£0.35bn, or +£0.17bn if Arup grossed up its rate in real rather than nominal terms. The after-tax view also leans on capital allowances, and I have not checked which ones an offshore wind farm qualifies for, which could move it either way.
 - The shape of wear. The 0.5%/yr decline is a rule of thumb, not a sourced figure. It only spreads Arup's lifetime average over the years, but at break-even that matters: output held flat over the life would lower the NPV by £0.14bn and raise the break-even strike price to £94.39/MWh.
 - The transmission link. The developer pays for it during the build and gets its value back when the link is sold to an offshore transmission owner, after first power. Leaving it out, as Arup does, ignores the cost of funding it in between: £0.16bn if the sale comes a year after first power, rising to £0.27bn after four years, unless the sale price also covers the financing cost. Arup notes the sale can also make a profit, which would cut the other way.
-- The long-term price volatility, 6%/yr, is a literature assumption, not something the data can pin down. Across the literature's 4% to 10%, the farm's value moves from -£0.02bn to +£0.07bn, the value of waiting from £0.023bn to £0.014bn, and the second phase from £0.002bn to £0.092bn, so it matters most for the expansion. Waiting is worth less at higher volatility because, in this model, volatility also raises the average merchant price, from £78 to £89/MWh, which makes building now more attractive.
+- The long-term price volatility, 6%/yr, is my assumption, not something the data can pin down. Across my test range of 4% to 10%, the farm's value moves from -£0.02bn to +£0.07bn, the value of waiting from £0.023bn to £0.014bn, and the second phase from £0.002bn to £0.092bn, so it matters most for the expansion. Waiting is worth less at higher volatility because, in this model, volatility also raises the average merchant price, from £78 to £89/MWh, which makes building now more attractive.
 - The buyer's discount rate and sale cost in the abandon option, 5.0% and 2%, have no single source.
 - The short-term price fit uses only 30 months. This is deliberate, to exclude the gas crisis, and it only sets the fast wobble. Its two numbers, how fast prices pull back and how hard they jump, are imprecise and shift noticeably with small changes to the data, but they barely move yearly prices. The long-run uncertainty comes from the drift.
 - The grid charge is at the central, location-specific figure. A better or worse sited farm pays very different charges, so siting can move the answer by about £0.5bn either way.
@@ -260,4 +260,8 @@ flowchart TD
 | src/sensitivity.py | Show which input moves the NPV most |
 | src/visualisation.py | Draw every chart |
 | tests/ | Checks on the maths, including the option engine against a known answer, and on the data downloads and daily prices |
+
+## Licence
+
+The code is released under the MIT licence, in [LICENSE](LICENSE). The data files keep their publishers' licences, listed under [Data and sources](#data-and-sources). The renewables.ninja series is for non-commercial use only.
 ```
