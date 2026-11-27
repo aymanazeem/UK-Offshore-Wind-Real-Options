@@ -1,12 +1,13 @@
 """
-All model inputs in one place. Every number here is backed by a public source and used
-somewhere in the model. Money is in real 2024 pounds throughout, so there is no inflation;
-figures published in another year's prices are restated with the consumer price index.
+All model inputs in one place, each used somewhere in the model. Money is in real 2024 pounds
+throughout, so there is no inflation; figures published in another year's prices are restated
+with the consumer price index.
 
-Where a source gives a range we keep the low / central / high figures; the central one is the
-default and the low/high feed the sensitivity analysis. A few real-options inputs are not pinned
-to a single source and are marked PLACEHOLDER; they are always reported as a sensitivity, never
-as a headline result.
+Each number comes from the public source named beside it, unless it is marked as my assumption
+or my choice, whose effects docs/decisions.md reports, or as a PLACEHOLDER, which has no source
+and only feeds the illustrative sale option. Where a source gives a range we keep the low /
+central / high figures; the central one is the default and the low/high feed the sensitivity
+analysis.
 """
 
 from __future__ import annotations
@@ -132,15 +133,18 @@ CFD_STRIKE_RANGE = {"low": CFD_AR6_STRIKE, "central": CFD_STRIKE, "high": CFD_AD
 # Capture factor: in merchant years, wind sells for less than the time-average price, because it
 # generates when every other wind farm does and that depresses the price ("cannibalisation").
 # Merchant revenue = capture_factor * market_price * generation. CfD years are unaffected.
+# My assumption for the 2050s and 2060s, when the merchant years fall; not a sourced figure.
 MERCHANT_CAPTURE_FACTOR = 0.85
 MERCHANT_CAPTURE_RANGE = {"low": 0.70, "central": 0.85, "high": 1.00}
 
 # --------------------------------------------------------------------------------------------
 # Real-options settings
 # --------------------------------------------------------------------------------------------
-DEFERRAL_MAX_YEARS = 4                  # how long Phase-1 commitment may be delayed
-EXPAND_WINDOW_YEARS = (3, 8)            # Phase 2 may be built 3-8 years after Phase-1 commissioning
-EXPAND_CAPEX_LEARNING = 0.075           # Phase 2 CAPEX is ~7.5% cheaper (build-out learning)
+DEFERRAL_MAX_YEARS = 4                  # my choice: how long Phase-1 commitment may be delayed
+EXPAND_WINDOW_YEARS = (3, 8)            # my choice: Phase 2 may be built 3-8 years after first power
+# My assumption: Phase 2 CAPEX is 7.5% cheaper, for lessons learned on Phase 1. Arup's medium
+# case (Table 5) has industry build costs flat to 2035 and 4.2% lower by 2040.
+EXPAND_CAPEX_LEARNING = 0.075
 
 # Abandon = a mid-life sale of the operating asset to a lower-cost-of-capital buyer. Both inputs
 # are PLACEHOLDERS, reported only as a sensitivity.
@@ -174,10 +178,10 @@ PRICE_RAW_CSV = DATA_RAW_DIR / f"elexon_market_index_{PRICE_DOWNLOAD_START}_{PRI
 PRICE_HISTORY_START = "2024-01-01"
 SIM_START_DATE = "2026-07-01"           # first simulated month (day after the last price observation)
 
-# The long-term price level drifts on a slow random walk. Its volatility cannot be pinned down
-# from only ~2.5 years of data, so it is a forward-looking assumption (Schwartz-Smith style,
-# power-market literature ~5-15%/yr) and is always reported as a sensitivity. This is what makes
-# the price fan keep widening with horizon, so that decades-out uncertainty is real.
+# The long-term price level drifts on a slow random walk (Schwartz and Smith, 2000). Its
+# volatility cannot be pinned down from only ~2.5 years of data, so it is my assumption, tested
+# from 4% to 10%. This is what makes the price fan keep widening with horizon, so that
+# decades-out uncertainty is real.
 PRICE_LT_VOL = 0.06                     # sigma of the long-run level, per year (log terms)
 PRICE_LT_VOL_RANGE = {"low": 0.04, "central": 0.06, "high": 0.10}
-PRICE_LT_DRIFT = 0.0                    # no deterministic real-terms price trend
+PRICE_LT_DRIFT = 0.0                    # my assumption: no trend in the real price

@@ -12,7 +12,7 @@ The base case values cash flows before tax, because Arup's 6.2% is a pre-tax rat
 
 ## 3. Calibrate the long-term price volatility to forward data
 
-The long-term volatility, 6%/yr, is an assumption from the literature, because 30 months of history cannot pin it down. Across the literature's 4% to 10% it moves the farm's value from -£0.02bn to +£0.07bn and the expansion option from £0.002bn to £0.092bn, partly because in this model a higher volatility also raises the average merchant price. Calibrating the two-factor model to long-dated GB power forward prices, for example with a Kalman filter, would replace the assumption with a measurement. This is the one new class of data the project needs, and forward prices are usually licensed, so check access first.
+The long-term volatility, 6%/yr, is my assumption, because 30 months of history cannot pin it down. Across my test range of 4% to 10% it moves the farm's value from -£0.02bn to +£0.07bn and the expansion option from £0.002bn to £0.092bn, partly because in this model a higher volatility also raises the average merchant price. Calibrating the two-factor model to long-dated GB power forward prices, for example with a Kalman filter, would replace the assumption with a measurement. This is the one new class of data the project needs, and forward prices are usually licensed, so check access first.
 
 ## 4. Seabed rent and business rates
 
