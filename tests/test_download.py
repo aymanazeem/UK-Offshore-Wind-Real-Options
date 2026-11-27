@@ -1,11 +1,13 @@
-"""Checks on the Elexon download, with the API replaced by a fake that labels each half-hour with
-its UK settlement day as Elexon does. Requests respect the API's 7-day limit and leave no gaps,
-every half-hour of each requested day is kept once (46 and 50 on clock-change days), the file
-feeds data_prep's volume-weighted daily price, and a day that is not over yet is refused."""
+"""Checks on the downloads, with the network replaced by fakes. For Elexon, whose fake labels each
+half-hour with its UK settlement day: requests respect the 7-day limit and leave no gaps, every
+half-hour of each requested day is kept once (46 and 50 on clock-change days), the file feeds
+data_prep's volume-weighted daily price, and a day that is not over yet is refused. For the ONS
+price index: only monthly rows are kept, and a download with none leaves the file untouched."""
 
 from __future__ import annotations
 
 import csv
+import io
 from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -73,7 +75,32 @@ def test_every_half_hour_of_each_requested_day_is_kept_once(fake_api, start, end
 def test_download_feeds_the_volume_weighted_daily_price(fake_api):
     daily = data_prep.build_daily_price(dl.download("2024-07-01", "2024-07-03"))
     assert list(daily["date"]) == ["2024-07-01", "2024-07-02", "2024-07-03"]
-    assert daily["price_gbp_per_mwh"].to_numpy() == pytest.approx(55.0)
+    assert daily["price_nominal_gbp_per_mwh"].to_numpy() == pytest.approx(55.0)
+
+
+ONS_CSV = b'''"Title","CPI INDEX 00: ALL ITEMS 2015=100"
+"CDID","D7BT"
+"2024","133.9"
+"2024 Q1","132.5"
+"2024 JAN","131.5"
+"2024 FEB","132.3"
+'''
+
+
+def test_cpi_download_keeps_only_the_monthly_rows(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl.urllib.request, "urlopen", lambda request, timeout: io.BytesIO(ONS_CSV))
+    out = dl.download_cpi(tmp_path / "cpi.csv")
+    assert out.read_text().splitlines() == ["month,cpi_index", "2024-01,131.5", "2024-02,132.3"]
+
+
+def test_cpi_download_leaves_the_file_alone_if_nothing_parses(monkeypatch, tmp_path):
+    out = tmp_path / "cpi.csv"
+    out.write_text("month,cpi_index\n2024-01,131.5\n")
+    monkeypatch.setattr(dl.urllib.request, "urlopen",
+                        lambda request, timeout: io.BytesIO(b'"Title","renamed series"\n'))
+    with pytest.raises(ValueError, match="no monthly rows"):
+        dl.download_cpi(out)
+    assert out.read_text() == "month,cpi_index\n2024-01,131.5\n"
 
 
 def test_refuses_a_day_that_is_not_over(monkeypatch, tmp_path):

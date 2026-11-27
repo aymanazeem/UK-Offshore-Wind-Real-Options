@@ -58,17 +58,20 @@ def chart_price_fan(n_paths):
     ym = (hist["date"].dt.year * 12 + hist["date"].dt.month).to_numpy()
     _, inv = np.unique(ym, return_inverse=True)
     monthly = pd.DataFrame({"yf": np.bincount(inv, weights=hist["yf"]) / np.bincount(inv),
-                            "p": np.bincount(inv, weights=hist["price_gbp_per_mwh"]) / np.bincount(inv)})
+                            "p": np.bincount(inv, weights=hist["price_real_gbp_per_mwh"]) / np.bincount(inv)})
 
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(monthly["yf"], monthly["p"], color="0.25", lw=1.4, label="Historical monthly avg")
     ax.fill_between(x, pct[10], pct[90], color=BLUE, alpha=0.22, label="Forecast P10-P90")
     ax.plot(x, pct[50], color=BLUE, lw=2.2, label="Forecast P50 (median)")
     ax.axvline(x[0] - 0.5, color="grey", ls=":", lw=1.2)
-    r1, r35 = pct[90][0] / pct[10][0], pct[90][-1] / pct[10][-1]
+    ax.axvline(x[P.CONSTRUCTION_YEARS] - 0.5, color="grey", ls="--", lw=1.0,
+               label="First power if committed now")
+    r_first, r_last = pct[90][0] / pct[10][0], pct[90][-1] / pct[10][-1]
     _box(ax, f"Two-factor OU\nκ={prm['kappa']:.1f} (half-life {prm['half_life_days']:.0f}d)\n"
              f"σ_short={prm['sigma_short']:.2f}  σ_long={prm['sigma_long']:.2f}/yr\n"
-             f"P90/P10: {r1:.2f} (yr1) → {r35:.2f} (yr35)", xy=(0.015, 0.97), ha="left", va="top")
+             f"P90/P10: {r_first:.2f} (yr1) → {r_last:.2f} (yr{len(x)})",
+         xy=(0.015, 0.97), ha="left", va="top")
     ax.set_ylim(0, max(float(monthly["p"].max()), float(pct[90].max())) * 1.2)
     ax.set_title("Chart 1: Simulated GB wholesale price fan (two-factor, widens with horizon)")
     ax.set_xlabel("Year"); ax.set_ylabel("Wholesale price (£/MWh, real 2024)")
@@ -121,7 +124,7 @@ def chart_npv(n_paths):
               ("+Merchant ops", res.pv_merchant.mean()), ("−Decom", -res.pv_decom)]
     running = 0.0
     for i, (lab, v) in enumerate(pieces):
-        axR.bar(i, v / BN, bottom=min(running, running + v) / BN, color=GREEN if v >= 0 else RED,
+        axR.bar(i, abs(v) / BN, bottom=min(running, running + v) / BN, color=GREEN if v >= 0 else RED,
                 width=0.6, alpha=0.85)
         running += v
     axR.bar(len(pieces), running / BN, color=DARK, width=0.6, alpha=0.9)

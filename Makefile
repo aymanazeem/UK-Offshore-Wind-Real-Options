@@ -13,7 +13,7 @@ N ?= 50000
 help:
 	@echo "Targets:"
 	@echo "  install       create ./venv if missing and install the pinned deps (PYTHON=... picks Python 3.12-3.14)"
-	@echo "  data          download the Elexon price history and rebuild data/processed/gb_price_daily.csv"
+	@echo "  data          download the Elexon prices and ONS CPI, then rebuild data/processed/gb_price_daily.csv"
 	@echo "  test          run the pytest suite"
 	@echo "  charts        regenerate all charts (N=$(N) paths; override with N=...)"
 	@echo "  charts-final  regenerate all charts at production quality (N_PATHS_FINAL)"

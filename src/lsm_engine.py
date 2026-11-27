@@ -29,7 +29,8 @@ import numpy as np
 from config import parameters as P
 from src.price_simulator import simulate_price_paths
 from src.generation_model import simulate_generation
-from src.financial_model import value_from_decision_year, value_paths, divestment_advantage
+from src.financial_model import (value_from_decision_year, value_paths, divestment_advantage,
+                                 operating_prices)
 
 LIFE = P.OPERATING_LIFE_YEARS
 
@@ -105,7 +106,7 @@ class DeferResult:
 
 def commit_npvs(price, gen, d_max: int, *, wacc=P.WACC) -> np.ndarray:
     """ex[:, t] = NPV of committing at year t (t = 0..d_max), in year-t money. price must carry
-    d_max + life columns."""
+    d_max + CONSTRUCTION_YEARS + life columns."""
     ex = np.empty((price.shape[0], d_max + 1))
     for t in range(d_max + 1):
         ex[:, t] = value_from_decision_year(price, gen, t, wacc=wacc).npv
@@ -193,9 +194,9 @@ def abandon_option(price, gen, *, wacc=P.WACC, degree=P.LSM_BASIS_DEGREE, buyer_
     optional, so the add-on is >= 0. The static NPV of building and holding is the benchmark."""
     advantage = divestment_advantage(price, gen, our_wacc=wacc, buyer_wacc=buyer_wacc,
                                      transaction_cost=transaction_cost)
-    static = value_paths(price[:, :LIFE], gen, wacc=wacc).npv
-    add_on, idx = _american_option(advantage, price[:, :LIFE], wacc=wacc, degree=degree,
-                                   must_act_by_end=False)
+    static = value_paths(price[:, :P.CONSTRUCTION_YEARS + LIFE], gen, wacc=wacc).npv
+    add_on, idx = _american_option(advantage, operating_prices(price, LIFE), wacc=wacc,
+                                   degree=degree, must_act_by_end=False)
     to_fid = (1.0 / (1.0 + wacc)) ** P.CONSTRUCTION_YEARS   # operating year 0 -> FID
     sell_year = np.where(idx >= 0, idx, -1)                 # node index == operating year here
     return AbandonResult(option_value=float(static.mean()) + float(add_on.mean()) * to_fid,
@@ -208,9 +209,11 @@ def abandon_option(price, gen, *, wacc=P.WACC, degree=P.LSM_BASIS_DEGREE, buyer_
 # Simulation helpers and CLI
 # --------------------------------------------------------------------------------------------
 def simulate(n_paths=P.N_PATHS, extra_price_years=0, seed=P.RANDOM_SEED, capacity_mw=P.CAPACITY_MW):
-    """Return (price, gen). `extra_price_years` adds price columns beyond the operating life so a
-    decision can be deferred; capacity_mw sizes the generation (Phase 2 uses PHASE2_CAPACITY_MW)."""
-    pp = simulate_price_paths(n_paths=n_paths, horizon=LIFE + extra_price_years, seed=seed)
+    """Return (price, gen). Prices cover the build and the operating life, plus
+    `extra_price_years` so a decision can be deferred; capacity_mw sizes the generation (Phase 2
+    uses PHASE2_CAPACITY_MW)."""
+    pp = simulate_price_paths(n_paths=n_paths,
+                              horizon=P.CONSTRUCTION_YEARS + LIFE + extra_price_years, seed=seed)
     gp = simulate_generation(n_paths=n_paths, horizon=LIFE, seed=seed + 1, capacity_mw=capacity_mw)
     n = min(pp.annual_prices.shape[0], gp.generation_mwh.shape[0])
     return pp.annual_prices[:n], gp.generation_mwh[:n]
@@ -233,8 +236,8 @@ def report(n_paths=P.N_PATHS, option="defer") -> str:
             + f", never {mix['never']:.0%}",
         ])
     if option == "expand":
-        # a Phase 2 committed at the last window year operates for `life` years beyond it, so the
-        # price paths must extend that far past the operating life.
+        # a Phase 2 committed at the last window year builds and then operates for `life` years,
+        # so the price paths must extend that far past Phase 1's operating life.
         price, gen2 = simulate(n_paths, extra_price_years=int(expand_decision_years()[-1]),
                                capacity_mw=P.PHASE2_CAPACITY_MW)
         res = expand_option(price, gen2)

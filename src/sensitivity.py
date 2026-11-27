@@ -85,7 +85,7 @@ def _breakeven(price, gen, label, build) -> float | None:
 def compute(n_paths: int = P.N_PATHS, seed: int = P.RANDOM_SEED) -> tuple[float, list[Lever]]:
     """Return (base-case mean NPV, levers sorted by swing ascending for a tornado)."""
     life = P.OPERATING_LIFE_YEARS
-    pp = simulate_price_paths(n_paths=n_paths, horizon=life, seed=seed)
+    pp = simulate_price_paths(n_paths=n_paths, horizon=P.CONSTRUCTION_YEARS + life, seed=seed)
     gp = simulate_generation(n_paths=n_paths, horizon=life, seed=seed + 1)
     n = min(pp.annual_prices.shape[0], gp.generation_mwh.shape[0])
     price, gen = pp.annual_prices[:n], gp.generation_mwh[:n]

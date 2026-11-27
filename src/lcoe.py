@@ -3,15 +3,16 @@ Reconciles the model with the published LCOE benchmark.
 
 The Levelised Cost of Energy (LCOE) is the constant price a project would need, over its whole
 life, to exactly break even. Arup for DESNZ publishes a central offshore-wind LCOE of £88.5/MWh
-(cost_benchmarks.csv) from the same cost inputs this model uses. This module recomputes LCOE from
-the model's own DCF and explains the gap to that benchmark, so the economics are transparent:
+in 2023 prices (cost_benchmarks.csv) from the same cost inputs this model uses; like those costs,
+it is restated in 2024 pounds. This module recomputes LCOE from the model's own DCF and explains
+the gap to that benchmark, so the economics are transparent:
 
   1. pre-tax LCOE  = PV(all costs) / PV(all generation)  -- the standard, tax-free definition.
   2. break-even price = the flat price that makes the model's *after-tax* NPV zero.
 
-The difference between the two is the tax effect; the difference between (1) and the £88.5
-benchmark is down to timing conventions (we lag generation behind a 5-year build and discount
-mid-year). Seeing both makes it clear why the headline NPV is negative at a CfD of £90.91.
+The difference between the two is the tax effect. The gap between (1) and the benchmark comes
+from differences in what is counted and when; docs/decisions.md sets them out. Seeing both makes
+it clear why the headline NPV is negative at a CfD of £90.91.
 """
 
 from __future__ import annotations
@@ -20,10 +21,12 @@ import numpy as np
 from scipy.optimize import brentq
 
 from config import parameters as P
-from src.financial_model import discount_factors, total_capex, value_paths
+from src.financial_model import discount_factors, operating_prices, total_capex, value_paths
+from src.price_simulator import simulate_price_paths
 
 LIFE = P.OPERATING_LIFE_YEARS
-BENCHMARK_LCOE = 88.5  # £/MWh, Arup for DESNZ 2024 central (cost_benchmarks.csv)
+# £/MWh, Arup for DESNZ 2024 central (cost_benchmarks.csv), published in 2023 prices
+BENCHMARK_LCOE = 88.5 * P.ARUP_TO_BASE_YEAR
 
 
 def _lifetime_generation_mwh(capacity_mw=P.CAPACITY_MW, cf=P.CF_MEAN) -> np.ndarray:
@@ -52,7 +55,7 @@ def breakeven_price(capacity_mw=P.CAPACITY_MW, cf=P.CF_MEAN, wacc=P.WACC) -> flo
     gen = _lifetime_generation_mwh(capacity_mw, cf)[None, :]  # one deterministic path
 
     def npv(price):
-        prices = np.full((1, LIFE), price)
+        prices = np.full((1, P.CONSTRUCTION_YEARS + LIFE), price)
         return value_paths(prices, gen, capacity_mw, wacc=wacc, cfd_term_years=0,
                            capture_factor=1.0).npv[0]
 
@@ -63,13 +66,17 @@ def main() -> None:
     lcoe = pretax_lcoe()
     be = breakeven_price()
     print("LCOE reconciliation (central inputs)")
-    print(f"  published benchmark (Arup/DESNZ)   £{BENCHMARK_LCOE:.1f}/MWh")
+    print(f"  published benchmark (Arup/DESNZ)   £{BENCHMARK_LCOE:.1f}/MWh   "
+          f"(£88.5 in {P.ARUP_PRICE_YEAR} prices)")
+    gap = lcoe - BENCHMARK_LCOE
     print(f"  model pre-tax LCOE                  £{lcoe:.1f}/MWh   "
-          f"(+£{lcoe - BENCHMARK_LCOE:.1f} vs benchmark: build lag + mid-year discounting)")
+          f"({'+' if gap >= 0 else '-'}£{abs(gap):.1f} vs benchmark; docs/decisions.md explains the gap)")
     print(f"  model after-tax break-even price    £{be:.1f}/MWh   "
           f"(+£{be - lcoe:.1f} vs pre-tax LCOE: tax effect)")
-    print(f"  CfD strike is £{P.CFD_STRIKE:.2f}/MWh and prices simulate near ~£81, both below "
-          f"£{be:.0f}, so the project is NPV-negative.")
+    merchant = operating_prices(simulate_price_paths().annual_prices, LIFE)[:, P.CFD_TERM_YEARS:]
+    print(f"  CfD strike is £{P.CFD_STRIKE:.2f}/MWh; after the CfD the market price averages "
+          f"£{merchant.mean():.0f}, of which wind captures £{P.MERCHANT_CAPTURE_FACTOR * merchant.mean():.0f}. "
+          f"Both are below £{be:.0f}, so the project is NPV-negative.")
 
 
 if __name__ == "__main__":

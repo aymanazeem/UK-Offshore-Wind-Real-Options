@@ -17,7 +17,7 @@ The price is modelled in three layers, all in log space so everything is a perce
 
 This two-factor split (Schwartz-Smith, 2000) matters for the real options: deferring or expanding
 is only worth anything if the future is genuinely uncertain. A one-factor mean-reverting model
-would snap back to its average within weeks and leave the 35-year price fan almost flat, wrongly
+would snap back to its average within weeks and leave the 40-year price fan almost flat, wrongly
 making every timing option worthless. The long-term random-walk factor fixes that.
 
 Calibration note: the short-term factor is fitted to ~2.5 years of recent monthly prices. The
@@ -73,10 +73,11 @@ def fit_seasonal(dates: pd.Series, log_price: np.ndarray) -> np.ndarray:
 # Calibration
 # --------------------------------------------------------------------------------------------
 def _load_history(csv_path=P.PRICE_DAILY_CSV, since: str = P.PRICE_HISTORY_START) -> pd.DataFrame:
-    """Daily prices from `since` onward, positive only (log needs P > 0), date-sorted."""
+    """Daily real prices from `since` onward, date-sorted. The model works in log prices, so the
+    rare days whose average was zero or negative are left out."""
     df = (pd.read_csv(csv_path, parse_dates=["date"])
           .sort_values("date").reset_index(drop=True))
-    keep = (df["price_gbp_per_mwh"] > 0) & (df["date"] >= pd.Timestamp(since))
+    keep = (df["price_real_gbp_per_mwh"] > 0) & (df["date"] >= pd.Timestamp(since))
     return df[keep].reset_index(drop=True)
 
 
@@ -85,7 +86,7 @@ def _monthly_deseasonalised(df: pd.DataFrame, seasonal_coef: np.ndarray) -> np.n
 
     We average the log residuals (not price levels) so there is no bias from taking a log of an
     average. The result is the short-term series the mean-reverting model is fitted to."""
-    logp = np.log(df["price_gbp_per_mwh"].to_numpy())
+    logp = np.log(df["price_real_gbp_per_mwh"].to_numpy())
     residual = logp - seasonal_design(fractional_year(df["date"])) @ seasonal_coef
     month_id = (df["date"].dt.year * 12 + df["date"].dt.month).to_numpy()
     _, inverse = np.unique(month_id, return_inverse=True)   # unique() sorts, so months stay ordered
@@ -123,11 +124,11 @@ def calibrate(csv_path=P.PRICE_DAILY_CSV) -> dict:
     """Fit the seasonal pattern and the short-term factor, and record the long-term assumption.
     Returns the dict written to config/price_calibrated.json."""
     df = _load_history(csv_path)
-    seasonal_coef = fit_seasonal(df["date"], np.log(df["price_gbp_per_mwh"].to_numpy()))
+    seasonal_coef = fit_seasonal(df["date"], np.log(df["price_real_gbp_per_mwh"].to_numpy()))
     short = fit_short_term(_monthly_deseasonalised(df, seasonal_coef))
 
     years = df["date"].dt.year.to_numpy()
-    price = df["price_gbp_per_mwh"].to_numpy()
+    price = df["price_real_gbp_per_mwh"].to_numpy()
     annual_means = {int(y): float(price[years == y].mean()) for y in np.unique(years)}
     return {
         "metadata": {
@@ -171,7 +172,7 @@ class PricePaths:
 
 def simulate_price_paths(
     n_paths: int = P.N_PATHS,
-    horizon: int = P.OPERATING_LIFE_YEARS,
+    horizon: int = P.CONSTRUCTION_YEARS + P.OPERATING_LIFE_YEARS,
     seed: int = P.RANDOM_SEED,
     antithetic: bool = P.ANTITHETIC,
     lt_vol: float = P.PRICE_LT_VOL,
@@ -257,7 +258,8 @@ def main(argv=None) -> None:
     pct = paths.percentiles()
     print(f"\nPrice fan over the horizon ({n_paths:,} paths):")
     print(f"  {'year':>5} {'P10':>7} {'P50':>7} {'P90':>7} {'P90/P10':>8}")
-    for yr in (0, 4, 14, 24, 34):
+    horizon = paths.annual_prices.shape[1]
+    for yr in (0, 4, 14, 24, horizon - 1):
         p10, p50, p90 = pct[10][yr], pct[50][yr], pct[90][yr]
         print(f"  {yr + 1:>5} {p10:>7.1f} {p50:>7.1f} {p90:>7.1f} {p90 / p10:>8.2f}")
     print("  (P90/P10 should GROW with the horizon under the two-factor model)")

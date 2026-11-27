@@ -96,8 +96,10 @@ def simulate_generation(
     derate = (1.0 - P.DEGRADATION_RATE) ** age  # compound age de-rating, applied to every path
     generation = capacity_mw * cf * P.HOURS_PER_YEAR * derate
 
+    # output starts once a farm committed today has finished its build
     start = pd.Timestamp(P.SIM_START_DATE)
-    calendar_year = start.year + float(fractional_year(pd.Series([start]))[0]) + 0.5 + age
+    calendar_year = (start.year + float(fractional_year(pd.Series([start]))[0]) + 0.5
+                     + P.CONSTRUCTION_YEARS + age)
     return GenerationPaths(cf, generation, calendar_year, alpha, beta, mean, sd)
 
 

@@ -1,6 +1,7 @@
 """Checks on the DCF: the capital allowance only shifts the tax shield's timing (never its
-total), the capture factor touches merchant revenue only, the remaining-operations helper
-rebuilds the static NPV, and the headline NPV is stable."""
+total), the capture factor touches merchant revenue only, each operating year earns the price of
+its own year after the build, the remaining-operations helper rebuilds the static NPV, and the
+headline NPV is stable."""
 
 from __future__ import annotations
 
@@ -35,6 +36,21 @@ def test_capture_factor_only_affects_merchant(base_sim):
     assert haircut.pv_merchant.mean() < full.pv_merchant.mean()                   # merchant lower
 
 
+@pytest.mark.parametrize("decision_year", [0, 2, 4])
+def test_operating_year_earns_the_price_of_its_own_year(defer_sim, decision_year):
+    price, gen = defer_sim
+    first_merchant = P.CFD_TERM_YEARS                      # operating-year index
+    year = decision_year + P.CONSTRUCTION_YEARS + first_merchant   # that year, counted from today
+    bumped = price.copy()
+    bumped[:, year] += 10.0
+    gain = (fm.value_from_decision_year(bumped, gen, decision_year).npv
+            - fm.value_from_decision_year(price, gen, decision_year).npv)
+    t = P.CONSTRUCTION_YEARS + first_merchant + 0.5        # from the decision, mid-year
+    expected = (10.0 * P.MERCHANT_CAPTURE_FACTOR * gen[:, first_merchant] * (1 - P.TAX_RATE)
+                * (1 + P.WACC) ** -t)
+    assert gain == pytest.approx(expected, rel=1e-9)
+
+
 def test_remaining_ops_reconstructs_static(base_sim):
     price, gen = base_sim
     res = fm.value_paths(price, gen)
@@ -46,4 +62,4 @@ def test_remaining_ops_reconstructs_static(base_sim):
 def test_static_npv_headline():
     # base case, 50k paths, seed 42 (two-factor prices, WDA allowances, 0.85 capture factor)
     res, _, _ = fm.run(n_paths=50_000, seed=42)
-    assert res.npv.mean() / 1e9 == pytest.approx(-1.0834, abs=2e-3)
+    assert res.npv.mean() / 1e9 == pytest.approx(-1.1863, abs=2e-3)
